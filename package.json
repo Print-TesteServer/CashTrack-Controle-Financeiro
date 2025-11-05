@@ -1,0 +1,18 @@
+{
+  "name": "controle-financeiro",
+  "version": "1.0.0",
+  "description": "Sistema de controle financeiro com Python e React",
+  "scripts": {
+    "start": "concurrently -n \"BACKEND,FRONTEND\" -c \"cyan,yellow\" \"npm run start:backend\" \"npm run start:frontend\"",
+    "start:backend": "cd backend && venv\\Scripts\\python.exe main.py",
+    "start:frontend": "cd frontend && npm run dev",
+    "install:all": "npm run install:backend && npm run install:frontend",
+    "install:backend": "cd backend && python -m pip install -r requirements.txt",
+    "install:frontend": "cd frontend && npm install",
+    "setup": "npm run install:all"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
+
