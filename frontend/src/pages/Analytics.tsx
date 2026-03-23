@@ -1,6 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { analyticsService } from '../services/api';
-import type { CategoryAnalysis, MonthlyAnalysis, CashFlowProjection, BreakEvenAnalysis, BalanceAlert } from '../types';
+import type {
+  CategoryAnalysis,
+  MonthlyAnalysis,
+  CashFlowProjection,
+  BreakEvenAnalysis,
+  BalanceAlert,
+  ExpenseForecast,
+  SpendingAnomaly,
+  Recommendation,
+} from '../types';
 import {
   PieChart,
   Pie,
@@ -17,7 +26,48 @@ import {
   Area,
 } from 'recharts';
 import { formatCurrency } from '../utils/currency';
-import { AlertTriangle, TrendingUp, DollarSign } from 'lucide-react';
+import { AlertTriangle, TrendingUp, DollarSign, BrainCircuit } from 'lucide-react';
+
+const formatMonthYear = (value: string): string => {
+  const [year, month] = value.split('-').map(Number);
+  if (!year || !month) {
+    return value;
+  }
+  return new Date(year, month - 1, 1).toLocaleDateString('pt-BR', {
+    month: 'short',
+    year: 'numeric',
+  });
+};
+
+const getModelLabel = (model: string): string => {
+  const labels: Record<string, string> = {
+    moving_average_fallback: 'Media movel (historico curto)',
+    moving_average: 'Media movel',
+    linear_trend: 'Tendencia linear',
+    insufficient_data: 'Dados insuficientes',
+  };
+  return labels[model] ?? model;
+};
+
+const getPriorityLabel = (priority: Recommendation['priority']): string => {
+  const labels = { high: 'Alta', medium: 'Media', low: 'Baixa' };
+  return labels[priority];
+};
+
+const getSeverityLabel = (severity: SpendingAnomaly['severity']): string => {
+  const labels = { high: 'Alta', medium: 'Media', low: 'Baixa' };
+  return labels[severity];
+};
+
+const getDateRangeFromMonths = (months: number): { startDate: string; endDate: string } => {
+  const endDate = new Date();
+  const startDate = new Date(endDate);
+  startDate.setMonth(startDate.getMonth() - months);
+  return {
+    startDate: startDate.toISOString(),
+    endDate: endDate.toISOString(),
+  };
+};
 
 export default function Analytics() {
   const [expenseCategories, setExpenseCategories] = useState<CategoryAnalysis[]>([]);
@@ -26,10 +76,22 @@ export default function Analytics() {
   const [cashFlowProjection, setCashFlowProjection] = useState<CashFlowProjection[]>([]);
   const [breakEvenAnalysis, setBreakEvenAnalysis] = useState<BreakEvenAnalysis | null>(null);
   const [balanceAlert, setBalanceAlert] = useState<BalanceAlert | null>(null);
+  const [forecast, setForecast] = useState<ExpenseForecast | null>(null);
+  const [anomalies, setAnomalies] = useState<SpendingAnomaly[]>([]);
+  const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedPeriod, setSelectedPeriod] = useState(12);
   const [projectionMonths, setProjectionMonths] = useState(12);
   const [minBalance, setMinBalance] = useState<string>('');
+  const minBalanceDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (minBalanceDebounceRef.current) {
+        clearTimeout(minBalanceDebounceRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     loadAnalytics();
@@ -37,13 +99,17 @@ export default function Analytics() {
 
   const loadAnalytics = async () => {
     try {
-      const [expenses, income, trends, cashFlow, breakEven, alert] = await Promise.all([
-        analyticsService.getExpensesByCategory(),
-        analyticsService.getIncomeByCategory(),
+      const { startDate, endDate } = getDateRangeFromMonths(selectedPeriod);
+      const [expenses, income, trends, cashFlow, breakEven, alert, forecastData, anomaliesData, recommendationsData] = await Promise.all([
+        analyticsService.getExpensesByCategory(startDate, endDate),
+        analyticsService.getIncomeByCategory(startDate, endDate),
         analyticsService.getMonthlyTrends(selectedPeriod),
         analyticsService.getCashFlowProjection(projectionMonths),
         analyticsService.getBreakEvenAnalysis(),
         analyticsService.getBalanceAlert(minBalance ? parseFloat(minBalance) : undefined),
+        analyticsService.getExpenseForecast(1, Math.min(6, selectedPeriod), selectedPeriod),
+        analyticsService.getSpendingAnomalies(selectedPeriod, 2.0),
+        analyticsService.getRecommendations(selectedPeriod),
       ]);
 
       setExpenseCategories(expenses);
@@ -52,6 +118,9 @@ export default function Analytics() {
       setCashFlowProjection(cashFlow);
       setBreakEvenAnalysis(breakEven);
       setBalanceAlert(alert);
+      setForecast(forecastData);
+      setAnomalies(anomaliesData);
+      setRecommendations(recommendationsData);
     } catch (error) {
       console.error('Error loading analytics:', error);
     } finally {
@@ -61,12 +130,18 @@ export default function Analytics() {
 
   const handleMinBalanceChange = (value: string) => {
     setMinBalance(value);
-    if (value === '' || !isNaN(parseFloat(value))) {
-      // Recarrega alerta quando mudar o saldo mínimo
-      analyticsService.getBalanceAlert(value ? parseFloat(value) : undefined)
-        .then(setBalanceAlert)
-        .catch(console.error);
+    if (minBalanceDebounceRef.current) {
+      clearTimeout(minBalanceDebounceRef.current);
     }
+    minBalanceDebounceRef.current = setTimeout(() => {
+      minBalanceDebounceRef.current = null;
+      if (value === '' || !isNaN(parseFloat(value))) {
+        analyticsService
+          .getBalanceAlert(value ? parseFloat(value) : undefined)
+          .then(setBalanceAlert)
+          .catch(console.error);
+      }
+    }, 400);
   };
 
   if (loading) {
@@ -110,6 +185,87 @@ export default function Analytics() {
             <option value={12}>12 meses</option>
             <option value={24}>24 meses</option>
           </select>
+        </div>
+      </div>
+
+      {/* Intelligent Layer */}
+      <div className="bg-white rounded-lg shadow p-6">
+        <h2 className="text-xl font-bold text-gray-800 mb-4 flex items-center space-x-2">
+          <BrainCircuit className="w-6 h-6" />
+          <span>Camada Inteligente</span>
+        </h2>
+
+        {forecast && (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+            <div className="bg-indigo-50 p-4 rounded-lg">
+              <div className="text-sm text-gray-600">Previsao de Gastos ({formatMonthYear(forecast.target_month)})</div>
+              <div className="text-2xl font-bold text-indigo-700">{formatCurrency(forecast.predicted_amount)}</div>
+              <div className="text-xs text-gray-500 mt-1">
+                Modelo: {getModelLabel(forecast.model_used)} • Historico: {forecast.history_months} {forecast.history_months === 1 ? 'mes' : 'meses'}
+              </div>
+            </div>
+            <div className="bg-indigo-50 p-4 rounded-lg">
+              <div className="text-sm text-gray-600">Faixa Inferior (95%)</div>
+              <div className="text-2xl font-bold text-indigo-600">{formatCurrency(forecast.confidence_low)}</div>
+            </div>
+            <div className="bg-indigo-50 p-4 rounded-lg">
+              <div className="text-sm text-gray-600">Faixa Superior (95%)</div>
+              <div className="text-2xl font-bold text-indigo-600">{formatCurrency(forecast.confidence_high)}</div>
+            </div>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-stretch">
+          <div className="bg-gray-50 rounded-lg p-4 h-full flex flex-col">
+            <h3 className="font-semibold text-gray-800 mb-3">Anomalias Detectadas</h3>
+            {anomalies.length > 0 ? (
+              <div className="space-y-2 flex-1">
+                {anomalies.slice(0, 5).map((item, idx) => (
+                  <div key={`${item.category}-${item.month}-${idx}`} className="border border-gray-200 rounded p-3 bg-white">
+                    <div className="flex items-center justify-between">
+                      <div className="font-medium">{item.category} ({formatMonthYear(item.month)})</div>
+                      <span className={`text-xs px-2 py-1 rounded ${
+                        item.severity === 'high'
+                          ? 'bg-red-100 text-red-700'
+                          : item.severity === 'medium'
+                          ? 'bg-yellow-100 text-yellow-700'
+                          : 'bg-blue-100 text-blue-700'
+                      }`}>
+                        {getSeverityLabel(item.severity)}
+                      </span>
+                    </div>
+                    <div className="text-sm text-gray-600 mt-1">{item.reason}</div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="border border-gray-200 rounded p-3 bg-white flex-1">
+                <p className="text-sm text-gray-500">Nenhuma anomalia relevante detectada.</p>
+              </div>
+            )}
+          </div>
+
+          <div className="bg-gray-50 rounded-lg p-4 h-full flex flex-col">
+            <h3 className="font-semibold text-gray-800 mb-3">Recomendações Automáticas</h3>
+            {recommendations.length > 0 ? (
+              <div className="space-y-2 flex-1">
+                {recommendations.slice(0, 5).map((item, idx) => (
+                  <div key={`${item.title}-${idx}`} className="border border-gray-200 rounded p-3 bg-white">
+                    <div className="font-medium">{item.title || 'Recomendacao financeira'}</div>
+                    <div className="text-sm text-gray-600 mt-1">{item.reason}</div>
+                    <div className="text-sm text-gray-700 mt-1">Ação: {item.action}</div>
+                    <div className="text-xs text-gray-500 mt-1">
+                      Impacto estimado: {formatCurrency(item.estimated_impact)} • Prioridade: {getPriorityLabel(item.priority)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="border border-gray-200 rounded p-3 bg-white flex-1">
+                <p className="text-sm text-gray-500">Sem recomendações no momento.</p>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 

@@ -1,10 +1,35 @@
 import axios from 'axios';
-import type { Transaction, CreditCard, Savings, CategoryAnalysis, MonthlyAnalysis, ChartData, SummaryStatistics, CashFlowProjection, BalanceAlert, BreakEvenAnalysis } from '../types';
+import type {
+  Transaction,
+  CreditCard,
+  Savings,
+  CategoryAnalysis,
+  MonthlyAnalysis,
+  ChartData,
+  SummaryStatistics,
+  CashFlowProjection,
+  BalanceAlert,
+  BreakEvenAnalysis,
+  ExpenseForecast,
+  SpendingAnomaly,
+  Recommendation,
+} from '../types';
+
+/**
+ * Base URL da API.
+ * - Vazio ou ausente: requisições relativas (`/api/...`) — funcionam com o proxy do Vite em `dev` e `preview`.
+ * - URL completa: necessário no build servido sem proxy (ex.: arquivos estáticos em outro domínio).
+ */
+const rawBase = import.meta.env.VITE_API_URL;
+const baseURL =
+  typeof rawBase === 'string' && rawBase.trim() !== '' ? rawBase.trim().replace(/\/+$/, '') : '';
+const apiKey = import.meta.env.VITE_API_KEY;
 
 const api = axios.create({
-  baseURL: 'http://localhost:8000',
+  baseURL,
   headers: {
     'Content-Type': 'application/json',
+    ...(apiKey ? { 'X-API-Key': apiKey } : {}),
   },
 });
 
@@ -14,6 +39,8 @@ export const transactionService = {
     type?: string;
     start_date?: string;
     end_date?: string;
+    skip?: number;
+    limit?: number;
   }): Promise<Transaction[]> => {
     const response = await api.get('/api/transactions/', { params });
     return response.data;
@@ -217,6 +244,34 @@ export const analyticsService = {
   getBalanceAlert: async (min_balance?: number): Promise<BalanceAlert> => {
     const response = await api.get('/api/analytics/balance-alert', {
       params: min_balance ? { min_balance } : {},
+    });
+    return response.data;
+  },
+
+  getExpenseForecast: async (
+    months_ahead: number = 1,
+    min_history_months: number = 6,
+    lookback_months: number = 24
+  ): Promise<ExpenseForecast> => {
+    const response = await api.get('/api/analytics/forecast-expenses', {
+      params: { months_ahead, min_history_months, lookback_months },
+    });
+    return response.data;
+  },
+
+  getSpendingAnomalies: async (
+    window_months: number = 6,
+    z_threshold: number = 2.0
+  ): Promise<SpendingAnomaly[]> => {
+    const response = await api.get('/api/analytics/anomalies', {
+      params: { window_months, z_threshold },
+    });
+    return response.data;
+  },
+
+  getRecommendations: async (lookback_months: number = 12): Promise<Recommendation[]> => {
+    const response = await api.get('/api/analytics/recommendations', {
+      params: { lookback_months },
     });
     return response.data;
   },

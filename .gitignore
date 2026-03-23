@@ -39,4 +39,11 @@ yarn-error.log*
 .env.local
 .env.production
 
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+backend/test-report.json
+backend/test-report.txt
 

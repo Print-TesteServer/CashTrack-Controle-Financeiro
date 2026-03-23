@@ -4,7 +4,17 @@ from typing import Optional
 from datetime import datetime
 from app.database import get_db
 from app.services.analytics import AnalyticsService
-from app.schemas import CategoryAnalysis, MonthlyAnalysis, ChartData, CashFlowProjection, BalanceAlert, BreakEvenAnalysis
+from app.schemas import (
+    CategoryAnalysis,
+    MonthlyAnalysis,
+    ChartData,
+    CashFlowProjection,
+    BalanceAlert,
+    BreakEvenAnalysis,
+    ExpenseForecast,
+    SpendingAnomaly,
+    Recommendation,
+)
 
 router = APIRouter()
 
@@ -101,5 +111,38 @@ def get_balance_alert(
     """Análise de alerta de saldo"""
     service = AnalyticsService(db)
     return service.get_balance_alert_analysis(min_balance)
+
+
+@router.get("/forecast-expenses", response_model=ExpenseForecast)
+def get_expense_forecast(
+    months_ahead: int = Query(1, ge=1, le=6),
+    min_history_months: int = Query(6, ge=3, le=24),
+    lookback_months: int = Query(24, ge=3, le=24),
+    db: Session = Depends(get_db)
+):
+    """Previsão de gastos com baseline + tendência linear"""
+    service = AnalyticsService(db)
+    return service.get_expense_forecast(months_ahead, min_history_months, lookback_months)
+
+
+@router.get("/anomalies", response_model=list[SpendingAnomaly])
+def get_spending_anomalies(
+    window_months: int = Query(6, ge=3, le=24),
+    z_threshold: float = Query(2.0, ge=1.0, le=4.0),
+    db: Session = Depends(get_db)
+):
+    """Detecção de anomalias por categoria"""
+    service = AnalyticsService(db)
+    return service.get_spending_anomalies(window_months, z_threshold)
+
+
+@router.get("/recommendations", response_model=list[Recommendation])
+def get_recommendations(
+    lookback_months: int = Query(12, ge=3, le=24),
+    db: Session = Depends(get_db)
+):
+    """Recomendações automáticas baseadas em regras"""
+    service = AnalyticsService(db)
+    return service.get_recommendations(lookback_months)
 
 

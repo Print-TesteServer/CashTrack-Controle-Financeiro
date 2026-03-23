@@ -18,18 +18,15 @@ export default function Dashboard() {
 
   const loadData = async () => {
     try {
-      const [summaryData, allTransactions, expenseData, trendsData] = await Promise.all([
+      const [summaryData, recentTransactions, expenseData, trendsData] = await Promise.all([
         analyticsService.getSummary(),
-        transactionService.getAll(),
+        transactionService.getAll({ limit: 5 }),
         analyticsService.getExpenseChartData(),
         analyticsService.getTrendsChartData(6),
       ]);
 
-      // Limitar a 5 transações mais recentes
-      const transactions = allTransactions.slice(0, 5);
-
       setSummary(summaryData);
-      setRecentTransactions(transactions);
+      setRecentTransactions(recentTransactions);
       setExpenseChart(expenseData);
       setTrendsChart(trendsData);
     } catch (error) {

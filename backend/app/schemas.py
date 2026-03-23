@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Literal
 from app.models import TransactionType, PaymentMethod
 
 # Transaction Schemas
@@ -111,5 +111,34 @@ class BreakEvenAnalysis(BaseModel):
     break_even_date: Optional[str] = None
     is_sustainable: bool  # Se receitas > despesas
     message: str
+
+
+class ExpenseForecast(BaseModel):
+    predicted_amount: float
+    confidence_low: float
+    confidence_high: float
+    model_used: Literal["moving_average_fallback", "moving_average", "linear_trend", "insufficient_data"]
+    history_months: int
+    target_month: str
+
+
+class SpendingAnomaly(BaseModel):
+    category: str
+    month: str
+    amount: float
+    expected_amount: float
+    deviation_percent: float
+    z_score: float
+    severity: Literal["low", "medium", "high"]
+    reason: str
+
+
+class Recommendation(BaseModel):
+    title: str
+    reason: str
+    action: str
+    estimated_impact: float
+    priority: Literal["low", "medium", "high"]
+    confidence: float
 
 

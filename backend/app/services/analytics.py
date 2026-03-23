@@ -1,10 +1,22 @@
 import pandas as pd
 import numpy as np
+import math
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 from sqlalchemy.orm import Session
 from app import models
-from app.schemas import CategoryAnalysis, MonthlyAnalysis, ChartData, CashFlowProjection, BalanceAlert, BreakEvenAnalysis
+from app.constants import is_cashflow_excluded_category
+from app.schemas import (
+    CategoryAnalysis,
+    MonthlyAnalysis,
+    ChartData,
+    CashFlowProjection,
+    BalanceAlert,
+    BreakEvenAnalysis,
+    ExpenseForecast,
+    SpendingAnomaly,
+    Recommendation,
+)
 
 class AnalyticsService:
     def __init__(self, db: Session):
@@ -38,10 +50,8 @@ class AnalyticsService:
         Cofrinhos: dinheiro ainda está na conta, apenas separado
         Cartão de crédito: compromisso futuro, não é dinheiro que saiu agora
         """
-        return df[
-            (df['payment_method'] != 'credit') & 
-            (df['category'] != 'Cofrinho')
-        ].copy()
+        excluded_cat = df["category"].apply(lambda c: is_cashflow_excluded_category(str(c)))
+        return df[(df["payment_method"] != "credit") & (~excluded_cat)].copy()
     
     def analyze_expenses_by_category(self, start_date: Optional[datetime] = None, end_date: Optional[datetime] = None) -> List[CategoryAnalysis]:
         """Análise de gastos por categoria (excluindo cartão de crédito e cofrinhos para consistência com o resumo)"""
@@ -381,7 +391,7 @@ class AnalyticsService:
         else:
             # Se despesas > receitas, calcula quando saldo chegará a zero
             if current_balance > 0:
-                months_until_break_even = int(abs(current_balance / monthly_net))
+                months_until_break_even = math.ceil(abs(current_balance / monthly_net))
                 break_even_date_obj = end_date + timedelta(days=30 * months_until_break_even)
                 break_even_date = break_even_date_obj.strftime('%Y-%m-%d')
                 message = f"Atenção! Com as despesas atuais, seu saldo chegará a zero em aproximadamente {months_until_break_even} meses ({break_even_date})."
@@ -487,5 +497,232 @@ class AnalyticsService:
             alert_level=alert_level,
             message=message
         )
+
+    def get_expense_forecast(
+        self,
+        months_ahead: int = 1,
+        min_history_months: int = 6,
+        lookback_months: int = 24,
+    ) -> ExpenseForecast:
+        """Prevê gastos futuros com baseline sazonal + tendência linear simples"""
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=30 * lookback_months)
+        df = self.get_transactions_dataframe(start_date, end_date)
+
+        if df.empty:
+            return ExpenseForecast(
+                predicted_amount=0,
+                confidence_low=0,
+                confidence_high=0,
+                model_used="insufficient_data",
+                history_months=0,
+                target_month=(end_date + timedelta(days=30 * months_ahead)).strftime("%Y-%m"),
+            )
+
+        df_filtered = self._filter_cash_transactions(df)
+        expenses = df_filtered[df_filtered["type"] == "expense"].copy()
+
+        if expenses.empty:
+            return ExpenseForecast(
+                predicted_amount=0,
+                confidence_low=0,
+                confidence_high=0,
+                model_used="insufficient_data",
+                history_months=0,
+                target_month=(end_date + timedelta(days=30 * months_ahead)).strftime("%Y-%m"),
+            )
+
+        expenses["month"] = pd.to_datetime(expenses["date"]).dt.to_period("M")
+        monthly_expenses = expenses.groupby("month")["amount"].sum().sort_index()
+        history_months = len(monthly_expenses)
+        target_month = (end_date + timedelta(days=30 * months_ahead)).strftime("%Y-%m")
+
+        if history_months < min_history_months:
+            baseline = float(monthly_expenses.mean())
+            confidence_margin = float(monthly_expenses.std(ddof=0)) if history_months > 1 else baseline * 0.2
+            return ExpenseForecast(
+                predicted_amount=round(max(0, baseline), 2),
+                confidence_low=round(max(0, baseline - confidence_margin), 2),
+                confidence_high=round(max(0, baseline + confidence_margin), 2),
+                model_used="moving_average_fallback",
+                history_months=history_months,
+                target_month=target_month,
+            )
+
+        values = monthly_expenses.values.astype(float)
+        x = np.arange(len(values), dtype=float)
+
+        # Baseline sazonal ingênuo: média dos últimos 3 meses
+        baseline_pred = float(values[-3:].mean()) if len(values) >= 3 else float(values.mean())
+
+        # Tendência linear simples com numpy (sem dependência extra)
+        slope, intercept = np.polyfit(x, values, 1)
+        linear_pred = float(slope * (len(values) + months_ahead - 1) + intercept)
+
+        # Escolhe modelo por menor erro absoluto médio no histórico
+        baseline_hist_pred = np.full_like(values, baseline_pred, dtype=float)
+        linear_hist_pred = slope * x + intercept
+        mae_baseline = float(np.mean(np.abs(values - baseline_hist_pred)))
+        mae_linear = float(np.mean(np.abs(values - linear_hist_pred)))
+
+        use_linear = mae_linear < mae_baseline
+        chosen_pred = linear_pred if use_linear else baseline_pred
+        model_used = "linear_trend" if use_linear else "moving_average"
+
+        residuals = values - (linear_hist_pred if use_linear else baseline_hist_pred)
+        residual_std = float(np.std(residuals, ddof=0)) if len(residuals) > 1 else chosen_pred * 0.15
+        confidence_low = max(0, chosen_pred - 1.96 * residual_std)
+        confidence_high = max(0, chosen_pred + 1.96 * residual_std)
+
+        return ExpenseForecast(
+            predicted_amount=round(max(0, chosen_pred), 2),
+            confidence_low=round(confidence_low, 2),
+            confidence_high=round(confidence_high, 2),
+            model_used=model_used,
+            history_months=history_months,
+            target_month=target_month,
+        )
+
+    def get_spending_anomalies(self, window_months: int = 6, z_threshold: float = 2.0) -> List[SpendingAnomaly]:
+        """Detecta anomalias por categoria usando z-score + variação percentual"""
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=30 * max(window_months, 3))
+        df = self.get_transactions_dataframe(start_date, end_date)
+
+        if df.empty:
+            return []
+
+        df_filtered = self._filter_cash_transactions(df)
+        expenses = df_filtered[df_filtered["type"] == "expense"].copy()
+        if expenses.empty:
+            return []
+
+        expenses["month"] = pd.to_datetime(expenses["date"]).dt.to_period("M").astype(str)
+        monthly_category = expenses.groupby(["category", "month"])["amount"].sum().reset_index()
+
+        anomalies: List[SpendingAnomaly] = []
+        severity_rank = {"high": 3, "medium": 2, "low": 1}
+        for category, group in monthly_category.groupby("category"):
+            group = group.sort_values("month")
+            amounts = group["amount"].values.astype(float)
+            if len(amounts) < 3:
+                continue
+
+            mean_val = float(np.mean(amounts))
+            std_val = float(np.std(amounts, ddof=0))
+            latest_amount = float(amounts[-1])
+            latest_month = str(group.iloc[-1]["month"])
+
+            if std_val <= 0:
+                z_score = 0.0
+            else:
+                z_score = (latest_amount - mean_val) / std_val
+
+            deviation_percent = ((latest_amount - mean_val) / mean_val * 100) if mean_val > 0 else 0.0
+            abs_deviation_percent = abs(deviation_percent)
+
+            is_anomaly = abs(z_score) >= z_threshold or abs_deviation_percent >= 30
+            if not is_anomaly:
+                continue
+
+            abs_z = abs(z_score)
+            if abs_z >= 3 or abs_deviation_percent >= 60:
+                severity = "high"
+            elif abs_z >= 2.5 or abs_deviation_percent >= 45:
+                severity = "medium"
+            else:
+                severity = "low"
+
+            direction_text = "acima" if deviation_percent >= 0 else "abaixo"
+            reason = (
+                f"Gasto em {category} está {abs(deviation_percent):.1f}% {direction_text} da média recente "
+                f"(z-score {z_score:.2f})."
+            )
+
+            anomalies.append(
+                SpendingAnomaly(
+                    category=category,
+                    month=latest_month,
+                    amount=round(latest_amount, 2),
+                    expected_amount=round(mean_val, 2),
+                    deviation_percent=round(deviation_percent, 2),
+                    z_score=round(z_score, 2),
+                    severity=severity,
+                    reason=reason,
+                )
+            )
+
+        anomalies.sort(
+            key=lambda x: (severity_rank.get(x.severity, 0), abs(x.deviation_percent)),
+            reverse=True,
+        )
+        return anomalies
+
+    def get_recommendations(self, lookback_months: int = 12) -> List[Recommendation]:
+        """Gera recomendações práticas com base em regras transparentes"""
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=30 * max(lookback_months, 3))
+
+        summary = self.get_summary_statistics(start_date, end_date)
+        categories = self.analyze_expenses_by_category(start_date, end_date)
+        recommendations: List[Recommendation] = []
+
+        total_income = float(summary.get("total_income", 0))
+        total_expense = float(summary.get("total_expense", 0))
+        net_balance = float(summary.get("net_balance", 0))
+
+        if total_income > 0 and total_expense > 0:
+            for cat in categories[:5]:
+                if cat.percentage >= 30:
+                    impact = cat.total * 0.15
+                    recommendations.append(
+                        Recommendation(
+                            title=f"Otimizar gastos com {cat.category}",
+                            reason=f"{cat.category} representa {cat.percentage}% das suas despesas.",
+                            action=f"Reduza 15% nesta categoria para abrir folga no orçamento.",
+                            estimated_impact=round(impact, 2),
+                            priority="high" if cat.percentage >= 40 else "medium",
+                            confidence=0.82,
+                        )
+                    )
+
+        if net_balance < 0:
+            recommendations.append(
+                Recommendation(
+                    title="Reequilibrar fluxo mensal",
+                    reason="Seu saldo líquido está negativo.",
+                    action="Defina teto semanal para despesas variáveis e revise assinaturas/recorrências.",
+                    estimated_impact=round(abs(net_balance), 2),
+                    priority="high",
+                    confidence=0.88,
+                )
+            )
+
+        anomalies = self.get_spending_anomalies(window_months=max(lookback_months, 3), z_threshold=2.0)
+        for anomaly in anomalies[:2]:
+            recommendations.append(
+                Recommendation(
+                    title=f"Investigar aumento em {anomaly.category}",
+                    reason=anomaly.reason,
+                    action="Valide compras recentes e aplique limite mensal para essa categoria.",
+                    estimated_impact=round(max(0, anomaly.amount - anomaly.expected_amount), 2),
+                    priority="high" if anomaly.severity == "high" else "medium",
+                    confidence=0.78,
+                )
+            )
+
+        if not recommendations:
+            recommendations.append(
+                Recommendation(
+                    title="Orçamento estável",
+                    reason="Não foram detectados riscos relevantes no período recente.",
+                    action="Mantenha o acompanhamento semanal e atualize metas de economia.",
+                    estimated_impact=0,
+                    priority="low",
+                    confidence=0.7,
+                )
+            )
+
+        return recommendations[:6]
 
 

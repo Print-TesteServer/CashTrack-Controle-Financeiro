@@ -93,4 +93,33 @@ export interface BreakEvenAnalysis {
   message: string;
 }
 
+export interface ExpenseForecast {
+  predicted_amount: number;
+  confidence_low: number;
+  confidence_high: number;
+  model_used: 'moving_average_fallback' | 'moving_average' | 'linear_trend' | 'insufficient_data';
+  history_months: number;
+  target_month: string;
+}
+
+export interface SpendingAnomaly {
+  category: string;
+  month: string;
+  amount: number;
+  expected_amount: number;
+  deviation_percent: number;
+  z_score: number;
+  severity: 'low' | 'medium' | 'high';
+  reason: string;
+}
+
+export interface Recommendation {
+  title: string;
+  reason: string;
+  action: string;
+  estimated_impact: number;
+  priority: 'low' | 'medium' | 'high';
+  confidence: number;
+}
+
 

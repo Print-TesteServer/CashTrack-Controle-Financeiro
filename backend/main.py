@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api import transactions, analytics, credit_cards, savings
+from app.middleware import OptionalAPIKeyMiddleware
 from app.database import engine, Base
 import sqlite3
 import os
@@ -74,6 +75,8 @@ else:
 app = FastAPI(title="Controle Financeiro API", version="1.0.0")
 
 # CORS
+# API key primeiro (inner), CORS por último (outermost) — preflight e headers corretos
+app.add_middleware(OptionalAPIKeyMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://localhost:3000"],

@@ -176,6 +176,52 @@ O backend utiliza Python para análises avançadas:
 - Análise temporal de receitas e despesas
 - Estatísticas descritivas
 
+## ⚙️ Variáveis de ambiente
+
+### Backend (`backend/.env` ou variáveis do sistema)
+
+Copie `backend/.env.example` para `backend/.env` se quiser usar arquivo local.
+
+| Variável | Descrição |
+|----------|-----------|
+| `API_KEY` | Opcional. Se definida (não vazia), todas as rotas `/api/*` exigem o header `X-API-Key` com o mesmo valor. |
+
+### Frontend (`frontend/.env` ou `frontend/.env.local`)
+
+Copie `frontend/.env.example` e ajuste:
+
+| Variável | Descrição |
+|----------|-----------|
+| `VITE_API_URL` | **Deixe vazio** para desenvolvimento e preview locais: o app chama `/api/...` na mesma origem e o Vite encaminha para o backend. **Defina URL completa** (ex. `https://api.seudominio.com`) quando publicar o front em hospedagem estática **sem** proxy — aí o navegador fala direto com o backend. |
+| `VITE_API_KEY` | Opcional. Igual ao `API_KEY` do backend, se você ativou proteção por chave. |
+| `VITE_API_PROXY_TARGET` | Opcional. Para onde o Vite envia `/api` no **dev** e no **`vite preview`** (padrão `http://localhost:8000`). Use se o FastAPI não estiver na porta 8000. |
+
+**Resumo:** com backend em `http://localhost:8000` e `npm run dev` (ou `npm run preview` após o build), não precisa configurar `VITE_API_URL`. Se as requisições falharem, confira se o backend está no ar e se `VITE_API_PROXY_TARGET` aponta para ele.
+
+## 🧪 Testes
+
+```bash
+cd backend
+python -m unittest discover -s tests -p "test_*.py" -v
+```
+
+Na raiz do projeto também:
+
+```bash
+npm run test:backend
+```
+
+Relatório estruturado (JSON + TXT em `backend/`):
+
+```bash
+cd backend
+python tests/run_tests.py
+```
+
+## 🔄 CI (GitHub Actions)
+
+O workflow `.github/workflows/ci.yml` roda em push/PR para `main`/`master`: testes Python no `backend` e `npm ci` + `npm run build` no `frontend`.
+
 ## 🔧 Configuração Avançada
 
 ### Alterar Banco de Dados
