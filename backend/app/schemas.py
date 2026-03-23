@@ -86,4 +86,30 @@ class ChartData(BaseModel):
     values: list[float]
     colors: Optional[list[str]] = None
 
+# Advanced Analytics Schemas
+class CashFlowProjection(BaseModel):
+    month: str
+    projected_income: float
+    projected_expense: float
+    projected_balance: float
+    is_critical: bool  # Se saldo projetado é negativo
+
+class BalanceAlert(BaseModel):
+    current_balance: float
+    min_balance_threshold: Optional[float] = None
+    days_until_zero: Optional[int] = None
+    suggested_deposit: Optional[float] = None
+    alert_level: str  # "safe", "warning", "critical"
+    message: str
+
+class BreakEvenAnalysis(BaseModel):
+    monthly_income_avg: float
+    monthly_expense_avg: float
+    current_balance: float
+    monthly_net: float  # Receita - Despesa mensal
+    months_until_break_even: Optional[int] = None
+    break_even_date: Optional[str] = None
+    is_sustainable: bool  # Se receitas > despesas
+    message: str
+
 

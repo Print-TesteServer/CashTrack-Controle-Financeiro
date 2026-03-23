@@ -64,4 +64,33 @@ export interface SummaryStatistics {
   transaction_count: number;
 }
 
+// Advanced Analytics Types
+export interface CashFlowProjection {
+  month: string;
+  projected_income: number;
+  projected_expense: number;
+  projected_balance: number;
+  is_critical: boolean;
+}
+
+export interface BalanceAlert {
+  current_balance: number;
+  min_balance_threshold?: number;
+  days_until_zero?: number;
+  suggested_deposit?: number;
+  alert_level: 'safe' | 'warning' | 'critical';
+  message: string;
+}
+
+export interface BreakEvenAnalysis {
+  monthly_income_avg: number;
+  monthly_expense_avg: number;
+  current_balance: number;
+  monthly_net: number;
+  months_until_break_even?: number;
+  break_even_date?: string;
+  is_sustainable: boolean;
+  message: string;
+}
+
 

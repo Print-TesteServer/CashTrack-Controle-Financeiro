@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { analyticsService } from '../services/api';
-import type { CategoryAnalysis, MonthlyAnalysis } from '../types';
+import type { CategoryAnalysis, MonthlyAnalysis, CashFlowProjection, BreakEvenAnalysis, BalanceAlert } from '../types';
 import {
   PieChart,
   Pie,
@@ -13,35 +13,59 @@ import {
   CartesianGrid,
   LineChart,
   Line,
+  AreaChart,
+  Area,
 } from 'recharts';
 import { formatCurrency } from '../utils/currency';
+import { AlertTriangle, TrendingUp, DollarSign } from 'lucide-react';
 
 export default function Analytics() {
   const [expenseCategories, setExpenseCategories] = useState<CategoryAnalysis[]>([]);
   const [incomeCategories, setIncomeCategories] = useState<CategoryAnalysis[]>([]);
   const [monthlyTrends, setMonthlyTrends] = useState<MonthlyAnalysis[]>([]);
+  const [cashFlowProjection, setCashFlowProjection] = useState<CashFlowProjection[]>([]);
+  const [breakEvenAnalysis, setBreakEvenAnalysis] = useState<BreakEvenAnalysis | null>(null);
+  const [balanceAlert, setBalanceAlert] = useState<BalanceAlert | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedPeriod, setSelectedPeriod] = useState(12);
+  const [projectionMonths, setProjectionMonths] = useState(12);
+  const [minBalance, setMinBalance] = useState<string>('');
 
   useEffect(() => {
     loadAnalytics();
-  }, [selectedPeriod]);
+  }, [selectedPeriod, projectionMonths]);
 
   const loadAnalytics = async () => {
     try {
-      const [expenses, income, trends] = await Promise.all([
+      const [expenses, income, trends, cashFlow, breakEven, alert] = await Promise.all([
         analyticsService.getExpensesByCategory(),
         analyticsService.getIncomeByCategory(),
         analyticsService.getMonthlyTrends(selectedPeriod),
+        analyticsService.getCashFlowProjection(projectionMonths),
+        analyticsService.getBreakEvenAnalysis(),
+        analyticsService.getBalanceAlert(minBalance ? parseFloat(minBalance) : undefined),
       ]);
 
       setExpenseCategories(expenses);
       setIncomeCategories(income);
       setMonthlyTrends(trends);
+      setCashFlowProjection(cashFlow);
+      setBreakEvenAnalysis(breakEven);
+      setBalanceAlert(alert);
     } catch (error) {
       console.error('Error loading analytics:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleMinBalanceChange = (value: string) => {
+    setMinBalance(value);
+    if (value === '' || !isNaN(parseFloat(value))) {
+      // Recarrega alerta quando mudar o saldo mínimo
+      analyticsService.getBalanceAlert(value ? parseFloat(value) : undefined)
+        .then(setBalanceAlert)
+        .catch(console.error);
     }
   };
 
@@ -238,6 +262,221 @@ export default function Analytics() {
         ) : (
           <p className="text-gray-500 text-center py-8">Nenhum dado de tendências disponível</p>
         )}
+      </div>
+
+      {/* Advanced Analytics Section */}
+      <div className="border-t-2 border-gray-300 pt-6">
+        <h2 className="text-2xl font-bold text-gray-800 mb-6">Análises Avançadas</h2>
+
+        {/* Break-Even Analysis */}
+        {breakEvenAnalysis && (
+          <div className="bg-white rounded-lg shadow p-6 mb-6">
+            <h3 className="text-xl font-bold text-gray-800 mb-4 flex items-center space-x-2">
+              <DollarSign className="w-6 h-6" />
+              <span>Ponto de Ruptura (Break-Even)</span>
+            </h3>
+            <div className={`p-4 rounded-lg mb-4 ${
+              breakEvenAnalysis.is_sustainable 
+                ? 'bg-green-50 border border-green-200' 
+                : 'bg-red-50 border border-red-200'
+            }`}>
+              <p className={`font-semibold ${
+                breakEvenAnalysis.is_sustainable ? 'text-green-800' : 'text-red-800'
+              }`}>
+                {breakEvenAnalysis.message}
+              </p>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="bg-blue-50 p-4 rounded-lg">
+                <div className="text-sm text-gray-600">Receita Média Mensal</div>
+                <div className="text-xl font-bold text-blue-600">
+                  {formatCurrency(breakEvenAnalysis.monthly_income_avg)}
+                </div>
+              </div>
+              <div className="bg-red-50 p-4 rounded-lg">
+                <div className="text-sm text-gray-600">Despesa Média Mensal</div>
+                <div className="text-xl font-bold text-red-600">
+                  {formatCurrency(breakEvenAnalysis.monthly_expense_avg)}
+                </div>
+              </div>
+              <div className="bg-purple-50 p-4 rounded-lg">
+                <div className="text-sm text-gray-600">Saldo Líquido Mensal</div>
+                <div className={`text-xl font-bold ${
+                  breakEvenAnalysis.monthly_net >= 0 ? 'text-green-600' : 'text-red-600'
+                }`}>
+                  {formatCurrency(breakEvenAnalysis.monthly_net)}
+                </div>
+              </div>
+              <div className="bg-gray-50 p-4 rounded-lg">
+                <div className="text-sm text-gray-600">Saldo Atual</div>
+                <div className={`text-xl font-bold ${
+                  breakEvenAnalysis.current_balance >= 0 ? 'text-green-600' : 'text-red-600'
+                }`}>
+                  {formatCurrency(breakEvenAnalysis.current_balance)}
+                </div>
+              </div>
+            </div>
+            {breakEvenAnalysis.months_until_break_even && (
+              <div className="mt-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                <div className="text-sm text-gray-600">Tempo até Break-Even</div>
+                <div className="text-lg font-bold text-yellow-700">
+                  {breakEvenAnalysis.months_until_break_even} meses
+                  {breakEvenAnalysis.break_even_date && (
+                    <span className="text-sm font-normal text-gray-600 ml-2">
+                      (aproximadamente {new Date(breakEvenAnalysis.break_even_date).toLocaleDateString('pt-BR')})
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Balance Alert */}
+        {balanceAlert && (
+          <div className="bg-white rounded-lg shadow p-6 mb-6">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-xl font-bold text-gray-800 flex items-center space-x-2">
+                <AlertTriangle className="w-6 h-6" />
+                <span>Alerta de Saldo</span>
+              </h3>
+              <div className="flex items-center space-x-2">
+                <label className="text-sm text-gray-600">Saldo Mínimo:</label>
+                <input
+                  type="number"
+                  value={minBalance}
+                  onChange={(e) => handleMinBalanceChange(e.target.value)}
+                  placeholder="Opcional"
+                  className="border border-gray-300 rounded-lg px-3 py-1 w-32 text-sm"
+                />
+              </div>
+            </div>
+            <div className={`p-4 rounded-lg mb-4 ${
+              balanceAlert.alert_level === 'critical' 
+                ? 'bg-red-50 border-2 border-red-300' 
+                : balanceAlert.alert_level === 'warning'
+                ? 'bg-yellow-50 border-2 border-yellow-300'
+                : 'bg-green-50 border-2 border-green-300'
+            }`}>
+              <div className={`font-semibold ${
+                balanceAlert.alert_level === 'critical' 
+                  ? 'text-red-800' 
+                  : balanceAlert.alert_level === 'warning'
+                  ? 'text-yellow-800'
+                  : 'text-green-800'
+              }`}>
+                {balanceAlert.message}
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="bg-gray-50 p-4 rounded-lg">
+                <div className="text-sm text-gray-600">Saldo Atual</div>
+                <div className={`text-xl font-bold ${
+                  balanceAlert.current_balance >= 0 ? 'text-green-600' : 'text-red-600'
+                }`}>
+                  {formatCurrency(balanceAlert.current_balance)}
+                </div>
+              </div>
+              {balanceAlert.days_until_zero !== null && balanceAlert.days_until_zero !== undefined && (
+                <div className="bg-orange-50 p-4 rounded-lg">
+                  <div className="text-sm text-gray-600">Dias até Saldo Zero</div>
+                  <div className={`text-xl font-bold ${
+                    balanceAlert.days_until_zero <= 30 ? 'text-red-600' : 
+                    balanceAlert.days_until_zero <= 60 ? 'text-yellow-600' : 'text-green-600'
+                  }`}>
+                    {balanceAlert.days_until_zero} dias
+                  </div>
+                </div>
+              )}
+              {balanceAlert.suggested_deposit && (
+                <div className="bg-blue-50 p-4 rounded-lg">
+                  <div className="text-sm text-gray-600">Aporte Sugerido</div>
+                  <div className="text-xl font-bold text-blue-600">
+                    {formatCurrency(balanceAlert.suggested_deposit)}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Cash Flow Projection */}
+        <div className="bg-white rounded-lg shadow p-6">
+          <div className="flex justify-between items-center mb-4">
+            <h3 className="text-xl font-bold text-gray-800 flex items-center space-x-2">
+              <TrendingUp className="w-6 h-6" />
+              <span>Fluxo de Caixa Projetado</span>
+            </h3>
+            <div className="flex items-center space-x-2">
+              <label className="text-sm text-gray-600">Meses:</label>
+              <select
+                value={projectionMonths}
+                onChange={(e) => setProjectionMonths(parseInt(e.target.value))}
+                className="border border-gray-300 rounded-lg px-3 py-2"
+              >
+                <option value={6}>6 meses</option>
+                <option value={12}>12 meses</option>
+                <option value={18}>18 meses</option>
+                <option value={24}>24 meses</option>
+              </select>
+            </div>
+          </div>
+          {cashFlowProjection.length > 0 ? (
+            <div className="space-y-4">
+              <ResponsiveContainer width="100%" height={400}>
+                <AreaChart data={cashFlowProjection}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="month" />
+                  <YAxis />
+                  <Tooltip formatter={(value: number) => formatCurrency(value)} />
+                  <Legend />
+                  <Area 
+                    type="monotone" 
+                    dataKey="projected_income" 
+                    stroke="#22c55e" 
+                    fill="#22c55e" 
+                    fillOpacity={0.3}
+                    name="Receita Projetada"
+                  />
+                  <Area 
+                    type="monotone" 
+                    dataKey="projected_expense" 
+                    stroke="#ef4444" 
+                    fill="#ef4444" 
+                    fillOpacity={0.3}
+                    name="Despesa Projetada"
+                  />
+                  <Area 
+                    type="monotone" 
+                    dataKey="projected_balance" 
+                    stroke="#3b82f6" 
+                    fill="#3b82f6" 
+                    fillOpacity={0.5}
+                    name="Saldo Projetado"
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+              
+              {/* Critical Months Alert */}
+              {cashFlowProjection.some(p => p.is_critical) && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                  <div className="font-semibold text-red-800 mb-2">⚠️ Meses Críticos (Saldo Negativo Projetado):</div>
+                  <div className="space-y-1">
+                    {cashFlowProjection
+                      .filter(p => p.is_critical)
+                      .map((projection, index) => (
+                        <div key={index} className="text-sm text-red-700">
+                          • {projection.month}: Saldo projetado de {formatCurrency(projection.projected_balance)}
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <p className="text-gray-500 text-center py-8">Nenhum dado de projeção disponível</p>
+          )}
+        </div>
       </div>
     </div>
   );

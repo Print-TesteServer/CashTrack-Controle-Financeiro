@@ -27,4 +27,32 @@ body {
   box-sizing: border-box;
 }
 
+/* Remove any default background patterns that might cause strange lines */
+body {
+  background: #f3f4f6 !important;
+  background-image: none !important;
+  background-repeat: no-repeat !important;
+  background-attachment: fixed !important;
+}
+
+/* Ensure no overflow issues */
+html, body {
+  overflow-x: hidden;
+}
+
+/* Fix for any potential grid/pattern backgrounds */
+body::before,
+body::after,
+html::before,
+html::after {
+  display: none !important;
+  content: none !important;
+}
+
+/* Ensure main container doesn't have background patterns */
+main {
+  background: transparent !important;
+  background-image: none !important;
+}
+
 

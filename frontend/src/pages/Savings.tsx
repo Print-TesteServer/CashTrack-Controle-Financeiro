@@ -19,6 +19,24 @@ export default function Savings() {
   const [operationError, setOperationError] = useState('');
   const [showSuccessMessage, setShowSuccessMessage] = useState(false);
   const [availableBalance, setAvailableBalance] = useState<number | null>(null);
+  
+  // Estados para modais de rendimento
+  const [showYieldModal, setShowYieldModal] = useState(false);
+  const [showAllYieldsModal, setShowAllYieldsModal] = useState(false);
+  const [yieldData, setYieldData] = useState<{
+    message: string;
+    yield_amount: number;
+    old_amount: number;
+    new_amount: number;
+    cdi_used: number;
+    annual_rate: number;
+  } | null>(null);
+  const [allYieldsData, setAllYieldsData] = useState<{
+    message: string;
+    updated: Array<{ name: string; yield: number }>;
+    total_yield: number;
+    cdi_used: number;
+  } | null>(null);
 
   const [formData, setFormData] = useState({
     name: '',
@@ -172,19 +190,36 @@ export default function Savings() {
       await loadYieldSummaries(updatedSavings);
       
       if (result.yield_amount > 0) {
-        alert(
-          `💰 Rendimento Calculado!\n\n` +
-          `Valor anterior: R$ ${result.old_amount.toFixed(2)}\n` +
-          `Rendimento: R$ ${result.yield_amount.toFixed(2)}\n` +
-          `Novo valor: R$ ${result.new_amount.toFixed(2)}\n\n` +
-          `CDI usado: ${result.cdi_used}% a.a.\n` +
-          `Taxa efetiva: ${result.annual_rate.toFixed(2)}% a.a.`
-        );
+        setYieldData({
+          message: result.message,
+          yield_amount: result.yield_amount,
+          old_amount: result.old_amount,
+          new_amount: result.new_amount,
+          cdi_used: result.cdi_used,
+          annual_rate: result.annual_rate,
+        });
+        setShowYieldModal(true);
       } else {
-        alert(result.message || 'Nenhum rendimento acumulado no período');
+        setYieldData({
+          message: result.message || 'Nenhum rendimento acumulado no período',
+          yield_amount: 0,
+          old_amount: 0,
+          new_amount: 0,
+          cdi_used: 0,
+          annual_rate: 0,
+        });
+        setShowYieldModal(true);
       }
     } catch (error: any) {
-      alert(error.response?.data?.detail || 'Erro ao calcular rendimento');
+      setYieldData({
+        message: error.response?.data?.detail || 'Erro ao calcular rendimento',
+        yield_amount: 0,
+        old_amount: 0,
+        new_amount: 0,
+        cdi_used: 0,
+        annual_rate: 0,
+      });
+      setShowYieldModal(true);
     }
   };
 
@@ -209,13 +244,20 @@ export default function Savings() {
   const handleCalculateAllYields = async () => {
     try {
       const result = await savingsService.calculateAllYields();
-      alert(`${result.message}\nTotal: R$ ${result.total_yield.toFixed(2)}\nCDI usado: ${result.cdi_used}% a.a.`);
+      setAllYieldsData(result);
+      setShowAllYieldsModal(true);
       await loadSavings();
       await loadCurrentCDI();
       // Recarregar resumos após calcular rendimentos
       await loadYieldSummaries();
     } catch (error: any) {
-      alert(error.response?.data?.detail || 'Erro ao calcular rendimentos');
+      setAllYieldsData({
+        message: error.response?.data?.detail || 'Erro ao calcular rendimentos',
+        updated: [],
+        total_yield: 0,
+        cdi_used: 0,
+      });
+      setShowAllYieldsModal(true);
     }
   };
 
@@ -353,7 +395,7 @@ export default function Savings() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 relative">
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-3xl font-bold text-gray-800">Cofrinhos</h1>
@@ -790,6 +832,168 @@ export default function Savings() {
         <div className="fixed top-4 right-4 bg-green-600 text-white px-6 py-3 rounded-lg shadow-lg z-50 flex items-center space-x-2">
           <ArrowDown className="w-5 h-5" />
           <span>Operação realizada com sucesso!</span>
+        </div>
+      )}
+
+      {/* Modal de Rendimento Individual */}
+      {showYieldModal && yieldData && (
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+          onClick={() => {
+            setShowYieldModal(false);
+            setYieldData(null);
+          }}
+        >
+          <div 
+            className="bg-white rounded-lg shadow-xl w-full max-w-md mx-4 my-4 overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+            style={{ 
+              padding: '1.5rem',
+              boxSizing: 'border-box'
+            }}
+          >
+            <h2 className="text-xl font-bold text-gray-800 mb-4">
+              💰 Rendimento Calculado
+            </h2>
+            
+            {yieldData.yield_amount > 0 ? (
+              <div className="space-y-3">
+                <div className="flex justify-between items-center py-2 border-b border-gray-200">
+                  <span className="text-sm text-gray-600">Valor anterior:</span>
+                  <span className="font-semibold text-gray-800">
+                    {formatCurrency(yieldData.old_amount)}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center py-2 border-b border-gray-200">
+                  <span className="text-sm text-gray-600">Rendimento:</span>
+                  <span className="font-semibold text-green-600">
+                    +{formatCurrency(yieldData.yield_amount)}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center py-2 border-b border-gray-200">
+                  <span className="text-sm text-gray-600">Novo valor:</span>
+                  <span className="font-semibold text-primary-600 text-lg">
+                    {formatCurrency(yieldData.new_amount)}
+                  </span>
+                </div>
+                <div className="mt-4 pt-3 border-t border-gray-200 space-y-2">
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-gray-600">CDI usado:</span>
+                    <span className="font-semibold text-gray-800">
+                      {yieldData.cdi_used}% a.a.
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-gray-600">Taxa efetiva:</span>
+                    <span className="font-semibold text-blue-600">
+                      {yieldData.annual_rate.toFixed(2)}% a.a.
+                    </span>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="py-4">
+                <p className="text-gray-700">{yieldData.message}</p>
+              </div>
+            )}
+
+            <div className="mt-6 flex justify-end">
+              <button
+                onClick={() => {
+                  setShowYieldModal(false);
+                  setYieldData(null);
+                }}
+                className="bg-primary-600 text-white px-6 py-2 rounded-lg hover:bg-primary-700"
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Rendimento de Todos os Cofrinhos */}
+      {showAllYieldsModal && allYieldsData && (
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+          onClick={() => {
+            setShowAllYieldsModal(false);
+            setAllYieldsData(null);
+          }}
+        >
+          <div 
+            className="bg-white rounded-lg shadow-xl w-full max-w-lg mx-4 my-4 max-h-[90vh] overflow-hidden flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+            style={{ 
+              padding: '1.5rem',
+              boxSizing: 'border-box'
+            }}
+          >
+            <div className="overflow-y-auto flex-1">
+            <h2 className="text-xl font-bold text-gray-800 mb-4">
+              💰 Rendimentos Calculados
+            </h2>
+            
+            <div className="space-y-4">
+              {allYieldsData.updated.length > 0 ? (
+                <>
+                  <div className="bg-gray-50 rounded-lg p-4 space-y-2">
+                    <p className="text-sm text-gray-600 mb-3">
+                      {allYieldsData.message || `Rendimentos calculados para ${allYieldsData.updated.length} cofrinho(s)`}
+                    </p>
+                    
+                    {allYieldsData.updated.length > 0 && (
+                      <div className="space-y-2 max-h-60 overflow-y-auto">
+                        {allYieldsData.updated.map((item, index) => (
+                          <div 
+                            key={index}
+                            className="flex justify-between items-center py-2 border-b border-gray-200 last:border-0"
+                          >
+                            <span className="text-sm text-gray-700">{item.name}:</span>
+                            <span className="font-semibold text-green-600">
+                              +{formatCurrency(item.yield)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  
+                  <div className="pt-3 border-t border-gray-200 space-y-2">
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm font-semibold text-gray-700">Total:</span>
+                      <span className="font-bold text-primary-600 text-lg">
+                        {formatCurrency(allYieldsData.total_yield)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-gray-600">CDI usado:</span>
+                      <span className="font-semibold text-gray-800">
+                        {allYieldsData.cdi_used}% a.a.
+                      </span>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="py-4">
+                  <p className="text-gray-700">{allYieldsData.message}</p>
+                </div>
+              )}
+            </div>
+            </div>
+
+            <div className="mt-6 flex justify-end pt-4 border-t border-gray-200">
+              <button
+                onClick={() => {
+                  setShowAllYieldsModal(false);
+                  setAllYieldsData(null);
+                }}
+                className="bg-primary-600 text-white px-6 py-2 rounded-lg hover:bg-primary-700"
+              >
+                OK
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

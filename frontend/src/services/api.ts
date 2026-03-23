@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { Transaction, CreditCard, Savings, CategoryAnalysis, MonthlyAnalysis, ChartData, SummaryStatistics } from '../types';
+import type { Transaction, CreditCard, Savings, CategoryAnalysis, MonthlyAnalysis, ChartData, SummaryStatistics, CashFlowProjection, BalanceAlert, BreakEvenAnalysis } from '../types';
 
 const api = axios.create({
   baseURL: 'http://localhost:8000',
@@ -198,6 +198,25 @@ export const analyticsService = {
   getSummary: async (start_date?: string, end_date?: string): Promise<SummaryStatistics> => {
     const response = await api.get('/api/analytics/summary', {
       params: { start_date, end_date },
+    });
+    return response.data;
+  },
+
+  getCashFlowProjection: async (months: number = 12): Promise<CashFlowProjection[]> => {
+    const response = await api.get('/api/analytics/cash-flow', {
+      params: { months },
+    });
+    return response.data;
+  },
+
+  getBreakEvenAnalysis: async (): Promise<BreakEvenAnalysis> => {
+    const response = await api.get('/api/analytics/break-even');
+    return response.data;
+  },
+
+  getBalanceAlert: async (min_balance?: number): Promise<BalanceAlert> => {
+    const response = await api.get('/api/analytics/balance-alert', {
+      params: min_balance ? { min_balance } : {},
     });
     return response.data;
   },

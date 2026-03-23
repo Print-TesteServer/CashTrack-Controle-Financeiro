@@ -4,7 +4,7 @@ from typing import Optional
 from datetime import datetime
 from app.database import get_db
 from app.services.analytics import AnalyticsService
-from app.schemas import CategoryAnalysis, MonthlyAnalysis, ChartData
+from app.schemas import CategoryAnalysis, MonthlyAnalysis, ChartData, CashFlowProjection, BalanceAlert, BreakEvenAnalysis
 
 router = APIRouter()
 
@@ -75,5 +75,31 @@ def get_summary_statistics(
     """Estatísticas resumidas"""
     service = AnalyticsService(db)
     return service.get_summary_statistics(start_date, end_date)
+
+@router.get("/cash-flow", response_model=list[CashFlowProjection])
+def get_cash_flow_projection(
+    months: int = Query(12, ge=1, le=24),
+    db: Session = Depends(get_db)
+):
+    """Projeção de fluxo de caixa futuro"""
+    service = AnalyticsService(db)
+    return service.get_cash_flow_projection(months)
+
+@router.get("/break-even", response_model=BreakEvenAnalysis)
+def get_break_even_analysis(
+    db: Session = Depends(get_db)
+):
+    """Análise de ponto de ruptura (break-even)"""
+    service = AnalyticsService(db)
+    return service.get_break_even_analysis()
+
+@router.get("/balance-alert", response_model=BalanceAlert)
+def get_balance_alert(
+    min_balance: Optional[float] = Query(None),
+    db: Session = Depends(get_db)
+):
+    """Análise de alerta de saldo"""
+    service = AnalyticsService(db)
+    return service.get_balance_alert_analysis(min_balance)
 
 
