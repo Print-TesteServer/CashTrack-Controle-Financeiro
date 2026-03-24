@@ -8,7 +8,11 @@ Sistema completo de controle financeiro pessoal com análise de dados usando Pyt
 - **Cartões de Crédito**: Controle de limites, faturas e vencimentos
 - **Cofrinhos**: Acompanhamento de metas de poupança
 - **Dashboard**: Visão geral do seu financeiro
-- **Análises Avançadas**: Gráficos e estatísticas usando Python (Pandas, NumPy)
+- **Análises Avançadas**: Gráficos e estatísticas (Pandas, NumPy)
+- **ML aplicado**: previsão de gastos com comparação de modelos (média móvel, tendência linear, **ARIMA**), validação holdout com **MAE/RMSE**
+- **Classificação de categorias**: TF-IDF + regressão logística (treino com despesas + descrição), endpoint de inferência
+- **Anomalias**: regras com z-score e **Isolation Forest** (sklearn) em agregados mensais por categoria
+- **IA generativa**: explicação do panorama financeiro e **consultas em linguagem natural** → plano JSON seguro (sem SQL livre), via API compatível com OpenAI
 
 ## 🛠️ Tecnologias
 
@@ -17,6 +21,9 @@ Sistema completo de controle financeiro pessoal com análise de dados usando Pyt
 - SQLAlchemy - ORM para banco de dados
 - Pandas - Análise de dados
 - NumPy - Cálculos numéricos
+- statsmodels - Séries temporais (ARIMA)
+- scikit-learn - Classificação de texto e Isolation Forest
+- httpx - Chamadas HTTP ao modelo de linguagem (API OpenAI-compatível)
 - SQLite - Banco de dados (pode ser migrado para PostgreSQL)
 
 ### Frontend (React)
@@ -48,6 +55,9 @@ venv\Scripts\activate  # Windows
 # source venv/bin/activate  # Linux/Mac
 pip install -r requirements.txt
 cd ..
+
+# Na raiz (usa o Python do venv em backend — recomendado após clonar ou atualizar deps)
+npm run install:backend
 
 # 3. Instalar dependências do Frontend
 cd frontend
@@ -124,6 +134,34 @@ Com o backend rodando, acesse:
 - `GET /api/analytics/chart/income` - Dados para gráfico de receitas
 - `GET /api/analytics/chart/trends` - Dados para gráfico de tendências
 - `GET /api/analytics/summary` - Estatísticas resumidas
+- `GET /api/analytics/forecast-expenses` - Previsão de gastos (modelos + métricas quando há histórico suficiente)
+- `GET /api/analytics/anomalies` - Anomalias (`method=zscore` \| `isolation_forest` \| `both`)
+
+### Machine learning (`/api/ml`)
+- `POST /api/ml/predict-category` - Sugestão de categoria a partir da descrição (requer modelo treinado)
+- `POST /api/ml/train-category-classifier` - Treina e salva o classificador em `app/ml/artifacts/`
+- `GET /api/ml/category-model` - Metadados do modelo (accuracy, macro F1, etc.)
+
+### IA (`/api/ai`) — chave só no servidor
+- `POST /api/ai/explain` - Texto explicativo com base em **resumos agregados** (totais, categorias, previsão, anomalias)
+- `POST /api/ai/query` - Pergunta em PT-BR → JSON estruturado (intents whitelisted) → resposta numérica / ranking
+
+## 🧠 Inteligência aplicada (resumo)
+
+| Área | O que faz | Onde ver |
+|------|-----------|----------|
+| Séries temporais | Benchmark MA / linear / ARIMA com holdout (12+ meses), MAE/RMSE | `GET .../forecast-expenses`, UI Análises |
+| Classificação | Pipeline sklearn (TF-IDF + LogisticRegression), `joblib` | `POST /api/ml/*`, script `backend/scripts/train_category_classifier.py` |
+| Anomalias | Z-score + Isolation Forest sobre totais mensais por categoria | `GET .../anomalies?method=...` |
+| LLM | Explicação e NL→plano seguro; **não** envia lista de transações brutas ao modelo | `POST /api/ai/explain`, `POST /api/ai/query` |
+
+**Treinar classificador de categorias (CLI):** com despesas com descrição no banco, a partir de `backend/`:
+
+```bash
+venv\Scripts\python.exe scripts\train_category_classifier.py
+```
+
+Artefatos gerados ficam em `backend/app/ml/artifacts/` (ignorados pelo git por padrão).
 
 ## 📁 Estrutura do Projeto
 
@@ -135,7 +173,9 @@ Controle-Financeiro/
 │   │   ├── models.py      # Modelos de banco de dados
 │   │   ├── schemas.py     # Schemas Pydantic
 │   │   ├── database.py    # Configuração do banco
-│   │   └── services/      # Serviços de análise
+│   │   ├── ml/            # Métricas, previsão, classificador, artefatos (joblib)
+│   │   └── services/      # Analytics, ai_insights, nl_query
+│   ├── scripts/           # Ex.: treino do classificador de categorias
 │   ├── main.py            # Aplicação FastAPI
 │   └── requirements.txt    # Dependências Python
 │
@@ -167,14 +207,13 @@ Controle-Financeiro/
 
 **Dica**: Para parar ambos os servidores, pressione `Ctrl+C` no terminal onde executou o comando.
 
-## 📊 Análises com Python
+## 📊 Análises e ML com Python
 
-O backend utiliza Python para análises avançadas:
-- Agrupamento por categoria usando Pandas
-- Cálculos de tendências e médias
-- Geração de dados para gráficos
-- Análise temporal de receitas e despesas
-- Estatísticas descritivas
+O backend combina analytics clássico (Pandas/NumPy) com:
+- Agrupamentos, tendências, gráficos e estatísticas descritivas
+- Previsão de gastos com **seleção automática de modelo** e métricas no JSON quando há histórico longo
+- Modelos sklearn (classificação de texto, Isolation Forest) e **statsmodels** (ARIMA)
+- Camada de IA no servidor: apenas agregados e intents validados entram no prompt ou no plano estruturado
 
 ## ⚙️ Variáveis de ambiente
 
@@ -185,6 +224,13 @@ Copie `backend/.env.example` para `backend/.env` se quiser usar arquivo local.
 | Variável | Descrição |
 |----------|-----------|
 | `API_KEY` | Opcional. Se definida (não vazia), todas as rotas `/api/*` exigem o header `X-API-Key` com o mesmo valor. |
+| `OPENAI_API_KEY` | Opcional. Necessária para `POST /api/ai/explain` e `POST /api/ai/query`. **Nunca** commite no repositório. |
+| `OPENAI_MODEL` | Opcional. Ex.: `gpt-4o-mini` (padrão). |
+| `OPENAI_BASE_URL` | Opcional. Padrão `https://api.openai.com/v1`. Use URL compatível (ex. Ollama local) se preferir modelo local. |
+| `OPENAI_TIMEOUT_SECONDS` | Opcional. Timeout HTTP para o modelo (padrão 60). |
+| `ALLOW_TRAINING_WITHOUT_API_KEY` | Opcional. Padrão `true` (dev): permite `POST /api/ml/train-category-classifier` sem `API_KEY` no servidor. Em produção use `false` e defina `API_KEY` para exigir `X-API-Key`. |
+| `AI_RATE_LIMIT_PER_MINUTE` | Opcional. Limite de requisições por IP nas rotas `/api/ai/*` (padrão 40). |
+| `AI_RATE_LIMIT_ENABLED` | Opcional. `true`/`false` — ativa o limite acima (padrão `true`). |
 
 ### Frontend (`frontend/.env` ou `frontend/.env.local`)
 
@@ -199,6 +245,14 @@ Copie `frontend/.env.example` e ajuste:
 **Resumo:** com backend em `http://localhost:8000` e `npm run dev` (ou `npm run preview` após o build), não precisa configurar `VITE_API_URL`. Se as requisições falharem, confira se o backend está no ar e se `VITE_API_PROXY_TARGET` aponta para ele.
 
 ## 🧪 Testes
+
+```bash
+cd backend
+venv\Scripts\python.exe -m pip install pytest -q   # uma vez, se ainda nao tiver
+venv\Scripts\python.exe -m pytest tests/ -q
+```
+
+Ou com unittest:
 
 ```bash
 cd backend

@@ -13,6 +13,11 @@ import type {
   ExpenseForecast,
   SpendingAnomaly,
   Recommendation,
+  CategoryPredictResponse,
+  CategoryTrainResponse,
+  CategoryModelInfo,
+  AIExplainResponse,
+  AIQueryResponse,
 } from '../types';
 
 /**
@@ -261,10 +266,11 @@ export const analyticsService = {
 
   getSpendingAnomalies: async (
     window_months: number = 6,
-    z_threshold: number = 2.0
+    z_threshold: number = 2.0,
+    method: 'zscore' | 'isolation_forest' | 'both' = 'zscore'
   ): Promise<SpendingAnomaly[]> => {
     const response = await api.get('/api/analytics/anomalies', {
-      params: { window_months, z_threshold },
+      params: { window_months, z_threshold, method },
     });
     return response.data;
   },
@@ -273,6 +279,46 @@ export const analyticsService = {
     const response = await api.get('/api/analytics/recommendations', {
       params: { lookback_months },
     });
+    return response.data;
+  },
+};
+
+export const aiService = {
+  explainFinances: async (
+    lookback_months: number,
+    question?: string
+  ): Promise<AIExplainResponse> => {
+    const response = await api.post('/api/ai/explain', {
+      lookback_months,
+      question: question?.trim() || undefined,
+    });
+    return response.data;
+  },
+
+  nlQuery: async (question: string, monthsBackOverride?: number): Promise<AIQueryResponse> => {
+    const response = await api.post('/api/ai/query', {
+      question: question.trim(),
+      ...(monthsBackOverride != null && monthsBackOverride > 0
+        ? { months_back_override: monthsBackOverride }
+        : {}),
+    });
+    return response.data;
+  },
+};
+
+export const mlService = {
+  predictCategory: async (description: string): Promise<CategoryPredictResponse> => {
+    const response = await api.post('/api/ml/predict-category', { description });
+    return response.data;
+  },
+
+  trainCategoryClassifier: async (): Promise<CategoryTrainResponse> => {
+    const response = await api.post('/api/ml/train-category-classifier');
+    return response.data;
+  },
+
+  getCategoryModel: async (): Promise<CategoryModelInfo> => {
+    const response = await api.get('/api/ml/category-model');
     return response.data;
   },
 };

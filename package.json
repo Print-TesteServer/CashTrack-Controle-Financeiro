@@ -7,7 +7,7 @@
     "start:backend": "cd backend && venv\\Scripts\\python.exe main.py",
     "start:frontend": "cd frontend && npm run dev",
     "install:all": "npm run install:backend && npm run install:frontend",
-    "install:backend": "cd backend && python -m pip install -r requirements.txt",
+    "install:backend": "cd backend && venv\\Scripts\\python.exe -m pip install -r requirements.txt",
     "install:frontend": "cd frontend && npm install",
     "setup": "npm run install:all",
     "test:backend": "cd backend && python -m unittest discover -s tests -p \"test_*.py\" -v",

@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
-import { analyticsService } from '../services/api';
+import { analyticsService, aiService } from '../services/api';
 import type {
   CategoryAnalysis,
   MonthlyAnalysis,
@@ -9,6 +9,7 @@ import type {
   ExpenseForecast,
   SpendingAnomaly,
   Recommendation,
+  AIQueryResponse,
 } from '../types';
 import {
   PieChart,
@@ -26,7 +27,7 @@ import {
   Area,
 } from 'recharts';
 import { formatCurrency } from '../utils/currency';
-import { AlertTriangle, TrendingUp, DollarSign, BrainCircuit } from 'lucide-react';
+import { AlertTriangle, TrendingUp, DollarSign, BrainCircuit, Sparkles } from 'lucide-react';
 
 const formatMonthYear = (value: string): string => {
   const [year, month] = value.split('-').map(Number);
@@ -42,8 +43,9 @@ const formatMonthYear = (value: string): string => {
 const getModelLabel = (model: string): string => {
   const labels: Record<string, string> = {
     moving_average_fallback: 'Media movel (historico curto)',
-    moving_average: 'Media movel',
+    moving_average: 'Media movel (ultimos 3 meses)',
     linear_trend: 'Tendencia linear',
+    arima: 'ARIMA (statsmodels)',
     insufficient_data: 'Dados insuficientes',
   };
   return labels[model] ?? model;
@@ -57,6 +59,15 @@ const getPriorityLabel = (priority: Recommendation['priority']): string => {
 const getSeverityLabel = (severity: SpendingAnomaly['severity']): string => {
   const labels = { high: 'Alta', medium: 'Media', low: 'Baixa' };
   return labels[severity];
+};
+
+const getDetectorLabel = (d: SpendingAnomaly['detector'] | undefined): string => {
+  const labels: Record<string, string> = {
+    zscore: 'Z-score',
+    isolation_forest: 'Isolation Forest',
+    both: 'Z-score + IF',
+  };
+  return d ? labels[d] ?? d : 'Z-score';
 };
 
 const getDateRangeFromMonths = (months: number): { startDate: string; endDate: string } => {
@@ -81,9 +92,19 @@ export default function Analytics() {
   const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedPeriod, setSelectedPeriod] = useState(12);
+  const [anomalyMethod, setAnomalyMethod] = useState<'zscore' | 'isolation_forest' | 'both'>('zscore');
   const [projectionMonths, setProjectionMonths] = useState(12);
   const [minBalance, setMinBalance] = useState<string>('');
   const minBalanceDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [aiQuestion, setAiQuestion] = useState('');
+  const [aiAnswer, setAiAnswer] = useState<string | null>(null);
+  const [aiModel, setAiModel] = useState<string | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [nlQuestion, setNlQuestion] = useState('');
+  const [nlResult, setNlResult] = useState<AIQueryResponse | null>(null);
+  const [nlLoading, setNlLoading] = useState(false);
+  const [nlError, setNlError] = useState<string | null>(null);
 
   useEffect(() => {
     return () => {
@@ -95,7 +116,7 @@ export default function Analytics() {
 
   useEffect(() => {
     loadAnalytics();
-  }, [selectedPeriod, projectionMonths]);
+  }, [selectedPeriod, projectionMonths, anomalyMethod]);
 
   const loadAnalytics = async () => {
     try {
@@ -108,7 +129,7 @@ export default function Analytics() {
         analyticsService.getBreakEvenAnalysis(),
         analyticsService.getBalanceAlert(minBalance ? parseFloat(minBalance) : undefined),
         analyticsService.getExpenseForecast(1, Math.min(6, selectedPeriod), selectedPeriod),
-        analyticsService.getSpendingAnomalies(selectedPeriod, 2.0),
+        analyticsService.getSpendingAnomalies(selectedPeriod, 2.0, anomalyMethod),
         analyticsService.getRecommendations(selectedPeriod),
       ]);
 
@@ -125,6 +146,57 @@ export default function Analytics() {
       console.error('Error loading analytics:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleNlQuery = async () => {
+    const q = nlQuestion.trim();
+    if (q.length < 2) {
+      setNlError('Digite pelo menos 2 caracteres.');
+      return;
+    }
+    setNlLoading(true);
+    setNlError(null);
+    setNlResult(null);
+    try {
+      const res = await aiService.nlQuery(q, selectedPeriod);
+      setNlResult(res);
+    } catch (error: unknown) {
+      const ax = error as { response?: { data?: { detail?: unknown } } };
+      const detail = ax.response?.data?.detail;
+      const msg =
+        typeof detail === 'string'
+          ? detail
+          : detail != null
+            ? JSON.stringify(detail)
+            : 'Falha na consulta.';
+      setNlError(msg);
+    } finally {
+      setNlLoading(false);
+    }
+  };
+
+  const handleAiExplain = async () => {
+    setAiLoading(true);
+    setAiError(null);
+    setAiAnswer(null);
+    setAiModel(null);
+    try {
+      const res = await aiService.explainFinances(selectedPeriod, aiQuestion.trim() || undefined);
+      setAiAnswer(res.answer);
+      setAiModel(res.model);
+    } catch (error: unknown) {
+      const ax = error as { response?: { data?: { detail?: unknown } } };
+      const detail = ax.response?.data?.detail;
+      const msg =
+        typeof detail === 'string'
+          ? detail
+          : detail != null
+            ? JSON.stringify(detail)
+            : 'Falha ao gerar insight. Configure OPENAI_API_KEY no backend ou tente novamente.';
+      setAiError(msg);
+    } finally {
+      setAiLoading(false);
     }
   };
 
@@ -196,45 +268,115 @@ export default function Analytics() {
         </h2>
 
         {forecast && (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-            <div className="bg-indigo-50 p-4 rounded-lg">
-              <div className="text-sm text-gray-600">Previsao de Gastos ({formatMonthYear(forecast.target_month)})</div>
-              <div className="text-2xl font-bold text-indigo-700">{formatCurrency(forecast.predicted_amount)}</div>
-              <div className="text-xs text-gray-500 mt-1">
-                Modelo: {getModelLabel(forecast.model_used)} • Historico: {forecast.history_months} {forecast.history_months === 1 ? 'mes' : 'meses'}
+          <>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+              <div className="bg-indigo-50 p-4 rounded-lg">
+                <div className="text-sm text-gray-600">Previsao de Gastos ({formatMonthYear(forecast.target_month)})</div>
+                <div className="text-2xl font-bold text-indigo-700">{formatCurrency(forecast.predicted_amount)}</div>
+                <div className="text-xs text-gray-500 mt-1">
+                  Modelo: {getModelLabel(forecast.model_used)}
+                  {forecast.arima_order && forecast.model_used === 'arima' && (
+                    <span> (p,d,q)=({forecast.arima_order.join(', ')})</span>
+                  )}
+                  {' '}• Historico: {forecast.history_months} {forecast.history_months === 1 ? 'mes' : 'meses'}
+                  {forecast.holdout_months != null && forecast.holdout_months > 0 && (
+                    <span> • Validacao: ultimos {forecast.holdout_months} meses (holdout)</span>
+                  )}
+                </div>
+                {forecast.evaluation_mae != null && forecast.evaluation_rmse != null && (
+                  <div className="text-xs text-gray-500 mt-1">
+                    MAE (holdout): {forecast.evaluation_mae.toFixed(2)} • RMSE: {forecast.evaluation_rmse.toFixed(2)}
+                  </div>
+                )}
+              </div>
+              <div className="bg-indigo-50 p-4 rounded-lg">
+                <div className="text-sm text-gray-600">Faixa Inferior (95%)</div>
+                <div className="text-2xl font-bold text-indigo-600">{formatCurrency(forecast.confidence_low)}</div>
+              </div>
+              <div className="bg-indigo-50 p-4 rounded-lg">
+                <div className="text-sm text-gray-600">Faixa Superior (95%)</div>
+                <div className="text-2xl font-bold text-indigo-600">{formatCurrency(forecast.confidence_high)}</div>
               </div>
             </div>
-            <div className="bg-indigo-50 p-4 rounded-lg">
-              <div className="text-sm text-gray-600">Faixa Inferior (95%)</div>
-              <div className="text-2xl font-bold text-indigo-600">{formatCurrency(forecast.confidence_low)}</div>
-            </div>
-            <div className="bg-indigo-50 p-4 rounded-lg">
-              <div className="text-sm text-gray-600">Faixa Superior (95%)</div>
-              <div className="text-2xl font-bold text-indigo-600">{formatCurrency(forecast.confidence_high)}</div>
-            </div>
-          </div>
+            {forecast.model_comparison && forecast.model_comparison.length > 0 && (
+              <div className="mb-4 overflow-x-auto rounded-lg border border-indigo-100 bg-white">
+                <table className="min-w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-gray-200 bg-gray-50 text-left text-gray-600">
+                      <th className="px-3 py-2 font-medium">Modelo</th>
+                      <th className="px-3 py-2 font-medium">MAE</th>
+                      <th className="px-3 py-2 font-medium">RMSE</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {forecast.model_comparison.map((row) => (
+                      <tr key={row.model} className="border-b border-gray-100 last:border-0">
+                        <td className="px-3 py-2 font-mono text-xs text-gray-800">{row.model}</td>
+                        <td className="px-3 py-2">{row.mae.toFixed(4)}</td>
+                        <td className="px-3 py-2">{row.rmse.toFixed(4)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <p className="px-3 py-2 text-xs text-gray-500">
+                  {forecast.holdout_months != null && forecast.holdout_months > 0
+                    ? 'Comparacao em holdout: ultimos meses reservados para medir MAE/RMSE.'
+                    : 'Metricas in-sample no historico completo (media movel vs tendencia linear).'}
+                </p>
+              </div>
+            )}
+          </>
         )}
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-stretch">
           <div className="bg-gray-50 rounded-lg p-4 h-full flex flex-col">
-            <h3 className="font-semibold text-gray-800 mb-3">Anomalias Detectadas</h3>
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+              <h3 className="font-semibold text-gray-800">Anomalias Detectadas</h3>
+              <div className="flex items-center gap-2">
+                <label htmlFor="anomaly-method" className="text-xs text-gray-600">
+                  Metodo:
+                </label>
+                <select
+                  id="anomaly-method"
+                  value={anomalyMethod}
+                  onChange={(e) =>
+                    setAnomalyMethod(e.target.value as 'zscore' | 'isolation_forest' | 'both')
+                  }
+                  className="text-xs border border-gray-300 rounded px-2 py-1 bg-white max-w-[200px]"
+                >
+                  <option value="zscore">Z-score (regras)</option>
+                  <option value="isolation_forest">Isolation Forest (ML)</option>
+                  <option value="both">Ambos</option>
+                </select>
+              </div>
+            </div>
             {anomalies.length > 0 ? (
               <div className="space-y-2 flex-1">
                 {anomalies.slice(0, 5).map((item, idx) => (
                   <div key={`${item.category}-${item.month}-${idx}`} className="border border-gray-200 rounded p-3 bg-white">
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
                       <div className="font-medium">{item.category} ({formatMonthYear(item.month)})</div>
-                      <span className={`text-xs px-2 py-1 rounded ${
-                        item.severity === 'high'
-                          ? 'bg-red-100 text-red-700'
-                          : item.severity === 'medium'
-                          ? 'bg-yellow-100 text-yellow-700'
-                          : 'bg-blue-100 text-blue-700'
-                      }`}>
-                        {getSeverityLabel(item.severity)}
-                      </span>
+                      <div className="flex items-center gap-1 flex-wrap">
+                        <span className="text-xs px-2 py-0.5 rounded bg-gray-100 text-gray-700">
+                          {getDetectorLabel(item.detector)}
+                        </span>
+                        <span className={`text-xs px-2 py-1 rounded ${
+                          item.severity === 'high'
+                            ? 'bg-red-100 text-red-700'
+                            : item.severity === 'medium'
+                            ? 'bg-yellow-100 text-yellow-700'
+                            : 'bg-blue-100 text-blue-700'
+                        }`}>
+                          {getSeverityLabel(item.severity)}
+                        </span>
+                      </div>
                     </div>
                     <div className="text-sm text-gray-600 mt-1">{item.reason}</div>
+                    {item.isolation_score != null && (
+                      <div className="text-xs text-gray-500 mt-1">
+                        Score IF (decision_function): {item.isolation_score.toFixed(4)} — valores mais baixos indicam maior anomalia.
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -263,6 +405,85 @@ export default function Analytics() {
             ) : (
               <div className="border border-gray-200 rounded p-3 bg-white flex-1">
                 <p className="text-sm text-gray-500">Sem recomendações no momento.</p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="mt-6 border border-indigo-100 rounded-lg p-4 bg-gradient-to-br from-indigo-50/80 to-white">
+          <h3 className="font-semibold text-gray-800 mb-2 flex items-center gap-2">
+            <Sparkles className="w-5 h-5 text-indigo-600" />
+            Insights com IA
+          </h3>
+          <p className="text-xs text-gray-500 mb-3">
+            O backend monta um resumo agregado (totais e categorias) e chama um modelo de linguagem. A chave da API fica
+            apenas no servidor.
+          </p>
+          <div className="flex flex-col sm:flex-row gap-2 mb-3">
+            <textarea
+              value={aiQuestion}
+              onChange={(e) => setAiQuestion(e.target.value)}
+              placeholder="Opcional: ex. Por onde estou gastando mais? Ha algum risco?"
+              rows={2}
+              className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            />
+            <button
+              type="button"
+              onClick={handleAiExplain}
+              disabled={aiLoading}
+              className="shrink-0 px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
+            >
+              {aiLoading ? 'Gerando...' : 'Gerar insight'}
+            </button>
+          </div>
+          <p className="text-xs text-gray-500 mb-2">Usa o mesmo periodo selecionado acima ({selectedPeriod} meses).</p>
+          {aiError && (
+            <div className="text-sm text-red-600 bg-red-50 border border-red-100 rounded p-2 mb-2">{aiError}</div>
+          )}
+          {aiAnswer && (
+            <div className="text-sm text-gray-800 whitespace-pre-wrap border border-gray-200 rounded-lg p-3 bg-white">
+              {aiAnswer}
+              {aiModel && (
+                <div className="text-xs text-gray-500 mt-2">Modelo: {aiModel}</div>
+              )}
+            </div>
+          )}
+
+          <div className="mt-6 pt-4 border-t border-indigo-100">
+            <h4 className="font-medium text-gray-800 mb-1">Consulta em linguagem natural</h4>
+            <p className="text-xs text-gray-500 mb-2">
+              O modelo traduz sua pergunta para um plano seguro (totais por periodo, categoria, ranking). Sem SQL livre.
+              O periodo em meses segue o seletor acima ({selectedPeriod} meses).
+            </p>
+            <div className="flex flex-col sm:flex-row gap-2 mb-2">
+              <input
+                type="text"
+                value={nlQuestion}
+                onChange={(e) => setNlQuestion(e.target.value)}
+                placeholder="Ex.: Quanto gastei no total nos ultimos 3 meses?"
+                className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                onKeyDown={(e) => e.key === 'Enter' && handleNlQuery()}
+              />
+              <button
+                type="button"
+                onClick={handleNlQuery}
+                disabled={nlLoading}
+                className="shrink-0 px-4 py-2 rounded-lg bg-slate-700 text-white text-sm font-medium hover:bg-slate-800 disabled:opacity-50"
+              >
+                {nlLoading ? 'Consultando...' : 'Consultar'}
+              </button>
+            </div>
+            {nlError && (
+              <div className="text-sm text-red-600 bg-red-50 border border-red-100 rounded p-2 mb-2">{nlError}</div>
+            )}
+            {nlResult && (
+              <div className="text-sm text-gray-800 whitespace-pre-wrap border border-gray-200 rounded-lg p-3 bg-white">
+                {nlResult.answer}
+                <div className="text-xs text-gray-500 mt-2">
+                  Intent: {nlResult.intent} • Periodo (meses): {nlResult.months_back}
+                  {nlResult.value != null && ` • Valor: ${formatCurrency(nlResult.value)}`}
+                  {' '}• {nlResult.model}
+                </div>
               </div>
             )}
           </div>

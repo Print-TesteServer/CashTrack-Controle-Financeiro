@@ -93,13 +93,29 @@ export interface BreakEvenAnalysis {
   message: string;
 }
 
+export interface ForecastModelScore {
+  model: string;
+  mae: number;
+  rmse: number;
+}
+
 export interface ExpenseForecast {
   predicted_amount: number;
   confidence_low: number;
   confidence_high: number;
-  model_used: 'moving_average_fallback' | 'moving_average' | 'linear_trend' | 'insufficient_data';
+  model_used:
+    | 'moving_average_fallback'
+    | 'moving_average'
+    | 'linear_trend'
+    | 'arima'
+    | 'insufficient_data';
   history_months: number;
   target_month: string;
+  evaluation_mae?: number | null;
+  evaluation_rmse?: number | null;
+  holdout_months?: number | null;
+  model_comparison?: ForecastModelScore[] | null;
+  arima_order?: [number, number, number] | null;
 }
 
 export interface SpendingAnomaly {
@@ -111,6 +127,8 @@ export interface SpendingAnomaly {
   z_score: number;
   severity: 'low' | 'medium' | 'high';
   reason: string;
+  detector?: 'zscore' | 'isolation_forest' | 'both';
+  isolation_score?: number | null;
 }
 
 export interface Recommendation {
@@ -120,6 +138,50 @@ export interface Recommendation {
   estimated_impact: number;
   priority: 'low' | 'medium' | 'high';
   confidence: number;
+}
+
+export interface CategoryScore {
+  category: string;
+  probability: number;
+}
+
+export interface CategoryPredictResponse {
+  predicted_category: string | null;
+  confidence: number;
+  top_categories: CategoryScore[];
+  model_trained: boolean;
+  message: string | null;
+}
+
+export interface CategoryTrainResponse {
+  trained_at: string;
+  n_samples: number;
+  n_classes: number;
+  accuracy: number;
+  macro_f1: number;
+}
+
+export interface CategoryModelInfo {
+  trained: boolean;
+  trained_at?: string;
+  n_samples?: number;
+  n_classes?: number;
+  accuracy?: number;
+  macro_f1?: number;
+}
+
+export interface AIExplainResponse {
+  answer: string;
+  model: string;
+  lookback_months: number;
+}
+
+export interface AIQueryResponse {
+  answer: string;
+  intent: string;
+  months_back: number;
+  value: number | null;
+  model: string;
 }
 
 

@@ -1,7 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api import transactions, analytics, credit_cards, savings
+from app.api import transactions, analytics, credit_cards, savings, ml, ai
 from app.middleware import OptionalAPIKeyMiddleware
+from app.rate_limit_middleware import AIRateLimitMiddleware
 from app.database import engine, Base
 import sqlite3
 import os
@@ -84,12 +85,16 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Ultimo adicionado = mais externo: limita /api/ai antes de outras camadas
+app.add_middleware(AIRateLimitMiddleware)
 
 # Rotas
 app.include_router(transactions.router, prefix="/api/transactions", tags=["transactions"])
 app.include_router(analytics.router, prefix="/api/analytics", tags=["analytics"])
 app.include_router(credit_cards.router, prefix="/api/credit-cards", tags=["credit-cards"])
 app.include_router(savings.router, prefix="/api/savings", tags=["savings"])
+app.include_router(ml.router, prefix="/api/ml", tags=["ml"])
+app.include_router(ai.router, prefix="/api/ai", tags=["ai"])
 
 @app.get("/")
 def root():

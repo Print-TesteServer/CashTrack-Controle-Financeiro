@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 import math
 from datetime import datetime, timedelta
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Literal, Tuple
 from sqlalchemy.orm import Session
 from app import models
 from app.constants import is_cashflow_excluded_category
@@ -14,9 +14,12 @@ from app.schemas import (
     BalanceAlert,
     BreakEvenAnalysis,
     ExpenseForecast,
+    ForecastModelScore,
     SpendingAnomaly,
     Recommendation,
 )
+from app.ml import select_and_predict_monthly_expenses
+from app.ml.monthly_anomaly_isolation import compute_isolation_monthly_category_anomalies
 
 class AnalyticsService:
     def __init__(self, db: Session):
@@ -517,6 +520,11 @@ class AnalyticsService:
                 model_used="insufficient_data",
                 history_months=0,
                 target_month=(end_date + timedelta(days=30 * months_ahead)).strftime("%Y-%m"),
+                evaluation_mae=None,
+                evaluation_rmse=None,
+                holdout_months=None,
+                model_comparison=None,
+                arima_order=None,
             )
 
         df_filtered = self._filter_cash_transactions(df)
@@ -530,6 +538,11 @@ class AnalyticsService:
                 model_used="insufficient_data",
                 history_months=0,
                 target_month=(end_date + timedelta(days=30 * months_ahead)).strftime("%Y-%m"),
+                evaluation_mae=None,
+                evaluation_rmse=None,
+                holdout_months=None,
+                model_comparison=None,
+                arima_order=None,
             )
 
         expenses["month"] = pd.to_datetime(expenses["date"]).dt.to_period("M")
@@ -547,59 +560,38 @@ class AnalyticsService:
                 model_used="moving_average_fallback",
                 history_months=history_months,
                 target_month=target_month,
+                evaluation_mae=None,
+                evaluation_rmse=None,
+                holdout_months=None,
+                model_comparison=None,
+                arima_order=None,
             )
 
         values = monthly_expenses.values.astype(float)
-        x = np.arange(len(values), dtype=float)
-
-        # Baseline sazonal ingênuo: média dos últimos 3 meses
-        baseline_pred = float(values[-3:].mean()) if len(values) >= 3 else float(values.mean())
-
-        # Tendência linear simples com numpy (sem dependência extra)
-        slope, intercept = np.polyfit(x, values, 1)
-        linear_pred = float(slope * (len(values) + months_ahead - 1) + intercept)
-
-        # Escolhe modelo por menor erro absoluto médio no histórico
-        baseline_hist_pred = np.full_like(values, baseline_pred, dtype=float)
-        linear_hist_pred = slope * x + intercept
-        mae_baseline = float(np.mean(np.abs(values - baseline_hist_pred)))
-        mae_linear = float(np.mean(np.abs(values - linear_hist_pred)))
-
-        use_linear = mae_linear < mae_baseline
-        chosen_pred = linear_pred if use_linear else baseline_pred
-        model_used = "linear_trend" if use_linear else "moving_average"
-
-        residuals = values - (linear_hist_pred if use_linear else baseline_hist_pred)
-        residual_std = float(np.std(residuals, ddof=0)) if len(residuals) > 1 else chosen_pred * 0.15
-        confidence_low = max(0, chosen_pred - 1.96 * residual_std)
-        confidence_high = max(0, chosen_pred + 1.96 * residual_std)
-
+        result = select_and_predict_monthly_expenses(values, months_ahead)
+        comparison = (
+            [ForecastModelScore(model=m, mae=mae, rmse=rmse) for m, mae, rmse in result.model_comparison]
+            if result.model_comparison
+            else None
+        )
         return ExpenseForecast(
-            predicted_amount=round(max(0, chosen_pred), 2),
-            confidence_low=round(confidence_low, 2),
-            confidence_high=round(confidence_high, 2),
-            model_used=model_used,
+            predicted_amount=result.predicted_amount,
+            confidence_low=result.confidence_low,
+            confidence_high=result.confidence_high,
+            model_used=result.model_used,
             history_months=history_months,
             target_month=target_month,
+            evaluation_mae=result.evaluation_mae,
+            evaluation_rmse=result.evaluation_rmse,
+            holdout_months=result.holdout_months,
+            model_comparison=comparison,
+            arima_order=result.arima_order,
         )
 
-    def get_spending_anomalies(self, window_months: int = 6, z_threshold: float = 2.0) -> List[SpendingAnomaly]:
-        """Detecta anomalias por categoria usando z-score + variação percentual"""
-        end_date = datetime.now()
-        start_date = end_date - timedelta(days=30 * max(window_months, 3))
-        df = self.get_transactions_dataframe(start_date, end_date)
-
-        if df.empty:
-            return []
-
-        df_filtered = self._filter_cash_transactions(df)
-        expenses = df_filtered[df_filtered["type"] == "expense"].copy()
-        if expenses.empty:
-            return []
-
-        expenses["month"] = pd.to_datetime(expenses["date"]).dt.to_period("M").astype(str)
-        monthly_category = expenses.groupby(["category", "month"])["amount"].sum().reset_index()
-
+    def _spending_anomalies_zscore(
+        self, monthly_category: pd.DataFrame, z_threshold: float
+    ) -> List[SpendingAnomaly]:
+        """Último mês por categoria vs média da série — z-score + desvio percentual."""
         anomalies: List[SpendingAnomaly] = []
         severity_rank = {"high": 3, "medium": 2, "low": 1}
         for category, group in monthly_category.groupby("category"):
@@ -649,6 +641,8 @@ class AnalyticsService:
                     z_score=round(z_score, 2),
                     severity=severity,
                     reason=reason,
+                    detector="zscore",
+                    isolation_score=None,
                 )
             )
 
@@ -657,6 +651,124 @@ class AnalyticsService:
             reverse=True,
         )
         return anomalies
+
+    @staticmethod
+    def _merge_spending_anomalies(
+        z_list: List[SpendingAnomaly], i_list: List[SpendingAnomaly]
+    ) -> List[SpendingAnomaly]:
+        severity_rank = {"high": 3, "medium": 2, "low": 1}
+
+        def key(a: SpendingAnomaly) -> Tuple[str, str]:
+            return (a.category, a.month)
+
+        zm = {key(a): a for a in z_list}
+        im = {key(a): a for a in i_list}
+        out: List[SpendingAnomaly] = []
+        for k in sorted(set(zm) | set(im), key=lambda x: (x[0], x[1])):
+            z = zm.get(k)
+            i = im.get(k)
+            if z and i:
+                zr = severity_rank.get(z.severity, 0)
+                ir = severity_rank.get(i.severity, 0)
+                sev = z.severity if zr >= ir else i.severity
+                out.append(
+                    SpendingAnomaly(
+                        category=z.category,
+                        month=z.month,
+                        amount=z.amount,
+                        expected_amount=z.expected_amount,
+                        deviation_percent=z.deviation_percent,
+                        z_score=z.z_score,
+                        severity=sev,
+                        reason=f"{z.reason} | {i.reason}",
+                        detector="both",
+                        isolation_score=i.isolation_score,
+                    )
+                )
+            elif z:
+                out.append(
+                    SpendingAnomaly(
+                        category=z.category,
+                        month=z.month,
+                        amount=z.amount,
+                        expected_amount=z.expected_amount,
+                        deviation_percent=z.deviation_percent,
+                        z_score=z.z_score,
+                        severity=z.severity,
+                        reason=z.reason,
+                        detector="zscore",
+                        isolation_score=None,
+                    )
+                )
+            elif i:
+                out.append(i)
+
+        out.sort(
+            key=lambda x: (severity_rank.get(x.severity, 0), abs(x.deviation_percent)),
+            reverse=True,
+        )
+        return out
+
+    def get_spending_anomalies(
+        self,
+        window_months: int = 6,
+        z_threshold: float = 2.0,
+        method: Literal["zscore", "isolation_forest", "both"] = "zscore",
+    ) -> List[SpendingAnomaly]:
+        """Anomalias: z-score (regras), Isolation Forest (sklearn) ou união dos dois."""
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=30 * max(window_months, 3))
+        df = self.get_transactions_dataframe(start_date, end_date)
+
+        if df.empty:
+            return []
+
+        df_filtered = self._filter_cash_transactions(df)
+        expenses = df_filtered[df_filtered["type"] == "expense"].copy()
+        if expenses.empty:
+            return []
+
+        expenses["month"] = pd.to_datetime(expenses["date"]).dt.to_period("M").astype(str)
+        monthly_category = expenses.groupby(["category", "month"])["amount"].sum().reset_index()
+
+        if method == "zscore":
+            return self._spending_anomalies_zscore(monthly_category, z_threshold)
+        if method == "isolation_forest":
+            raw = compute_isolation_monthly_category_anomalies(monthly_category)
+            return [
+                SpendingAnomaly(
+                    detector="isolation_forest",
+                    isolation_score=r.get("isolation_score"),
+                    category=r["category"],
+                    month=r["month"],
+                    amount=r["amount"],
+                    expected_amount=r["expected_amount"],
+                    deviation_percent=r["deviation_percent"],
+                    z_score=r["z_score"],
+                    severity=r["severity"],
+                    reason=r["reason"],
+                )
+                for r in raw
+            ]
+
+        z_list = self._spending_anomalies_zscore(monthly_category, z_threshold)
+        raw = compute_isolation_monthly_category_anomalies(monthly_category)
+        i_list = [
+            SpendingAnomaly(
+                detector="isolation_forest",
+                isolation_score=r.get("isolation_score"),
+                category=r["category"],
+                month=r["month"],
+                amount=r["amount"],
+                expected_amount=r["expected_amount"],
+                deviation_percent=r["deviation_percent"],
+                z_score=r["z_score"],
+                severity=r["severity"],
+                reason=r["reason"],
+            )
+            for r in raw
+        ]
+        return self._merge_spending_anomalies(z_list, i_list)
 
     def get_recommendations(self, lookback_months: int = 12) -> List[Recommendation]:
         """Gera recomendações práticas com base em regras transparentes"""
@@ -698,7 +810,11 @@ class AnalyticsService:
                 )
             )
 
-        anomalies = self.get_spending_anomalies(window_months=max(lookback_months, 3), z_threshold=2.0)
+        anomalies = self.get_spending_anomalies(
+            window_months=max(lookback_months, 3),
+            z_threshold=2.0,
+            method="zscore",
+        )
         for anomaly in anomalies[:2]:
             recommendations.append(
                 Recommendation(

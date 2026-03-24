@@ -111,7 +111,7 @@ class AnalyticsServiceTests(unittest.TestCase):
                 CategoryAnalysis(category="Lazer", total=500.0, count=5, percentage=55.0),
             ]
 
-        def fake_anomalies(window_months=6, z_threshold=2.0):
+        def fake_anomalies(window_months=6, z_threshold=2.0, method="zscore", **_kwargs):
             captured["window_months"] = window_months
             return []
 

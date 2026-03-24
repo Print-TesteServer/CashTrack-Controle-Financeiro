@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import Literal, Optional
 from datetime import datetime
 from app.database import get_db
 from app.services.analytics import AnalyticsService
@@ -129,11 +129,15 @@ def get_expense_forecast(
 def get_spending_anomalies(
     window_months: int = Query(6, ge=3, le=24),
     z_threshold: float = Query(2.0, ge=1.0, le=4.0),
-    db: Session = Depends(get_db)
+    method: Literal["zscore", "isolation_forest", "both"] = Query(
+        "zscore",
+        description="zscore: regras clássicas; isolation_forest: sklearn; both: união",
+    ),
+    db: Session = Depends(get_db),
 ):
-    """Detecção de anomalias por categoria"""
+    """Detecção de anomalias por categoria (z-score e/ou Isolation Forest)"""
     service = AnalyticsService(db)
-    return service.get_spending_anomalies(window_months, z_threshold)
+    return service.get_spending_anomalies(window_months, z_threshold, method)
 
 
 @router.get("/recommendations", response_model=list[Recommendation])

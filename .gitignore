@@ -47,3 +47,7 @@ coverage.xml
 backend/test-report.json
 backend/test-report.txt
 
+# ML artifacts (treinamento local)
+backend/app/ml/artifacts/*.joblib
+backend/app/ml/artifacts/*.json
+
