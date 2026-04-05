@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Sistema de controle financeiro com Python e React",
   "scripts": {
-    "start": "concurrently -n \"BACKEND,FRONTEND\" -c \"cyan,yellow\" \"npm run start:backend\" \"npm run start:frontend\"",
+    "start": "concurrently -n \"BACKEND,FRONTEND\" -c \"cyan,yellow\" \"npm run start:backend\" \"wait-on tcp:127.0.0.1:8000 && npm run start:frontend\"",
     "start:backend": "cd backend && venv\\Scripts\\python.exe main.py",
     "start:frontend": "cd frontend && npm run dev",
     "install:all": "npm run install:backend && npm run install:frontend",
@@ -14,7 +14,8 @@
     "build:frontend": "cd frontend && npm run build"
   },
   "devDependencies": {
-    "concurrently": "^8.2.2"
+    "concurrently": "^8.2.2",
+    "wait-on": "^8.0.3"
   }
 }
 

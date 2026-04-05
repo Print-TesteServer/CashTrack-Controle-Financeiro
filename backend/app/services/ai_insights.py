@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import os
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
-import httpx
 from sqlalchemy.orm import Session
 
 from app.services.analytics import AnalyticsService
+from app.services.gemini_llm import call_llm_chat
 
 
 def _format_currency_br(value: float) -> str:
@@ -76,52 +75,6 @@ def build_finance_context_text(db: Session, lookback_months: int) -> str:
         lines.append("Anomalias: indisponivel.")
 
     return "\n".join(lines)
-
-
-def call_llm_chat(system_prompt: str, user_prompt: str) -> Tuple[str, str]:
-    """
-    Retorna (texto_resposta, model_id_usado).
-    Usa API compativel com OpenAI (OPENAI_BASE_URL + /chat/completions).
-    """
-    api_key = os.getenv("OPENAI_API_KEY", "").strip()
-    if not api_key:
-        raise ValueError("OPENAI_API_KEY nao configurada no ambiente do servidor.")
-
-    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip() or "gpt-4o-mini"
-    base = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
-    url = f"{base}/chat/completions"
-    timeout = float(os.getenv("OPENAI_TIMEOUT_SECONDS", "60"))
-
-    payload: Dict[str, Any] = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-        "temperature": 0.4,
-        "max_tokens": 1200,
-    }
-
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-
-    with httpx.Client(timeout=timeout) as client:
-        r = client.post(url, headers=headers, json=payload)
-        r.raise_for_status()
-        data = r.json()
-
-    content = (
-        data.get("choices", [{}])[0]
-        .get("message", {})
-        .get("content", "")
-        .strip()
-    )
-    if not content:
-        raise ValueError("Resposta vazia do modelo.")
-    used = data.get("model", model)
-    return content, str(used)
 
 
 def generate_finance_explanation(

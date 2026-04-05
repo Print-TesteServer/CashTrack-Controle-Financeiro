@@ -13,7 +13,7 @@ router = APIRouter()
 def post_explain_finances(body: AIExplainRequest, db: Session = Depends(get_db)) -> AIExplainResponse:
     """
     Gera explicacao em linguagem natural com base em totais e categorias.
-    Requer `OPENAI_API_KEY` no servidor (ou API compativel via OPENAI_BASE_URL).
+    Requer `GEMINI_API_KEY` no servidor (Google AI / Gemini).
     """
     lb = max(1, min(24, body.lookback_months))
     try:
@@ -36,7 +36,7 @@ def post_nl_query(body: AIQueryRequest, db: Session = Depends(get_db)) -> AIQuer
         result = run_nl_query(db, body.question, months_back_override=body.months_back_override)
     except ValueError as e:
         msg = str(e)
-        code = 503 if "OPENAI_API_KEY" in msg else 400
+        code = 503 if "GEMINI_API_KEY" in msg else 400
         raise HTTPException(status_code=code, detail=msg) from e
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Falha ao processar consulta: {e!s}") from e

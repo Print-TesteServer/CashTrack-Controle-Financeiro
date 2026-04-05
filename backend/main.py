@@ -1,11 +1,56 @@
+"""API Controle Financeiro — carrega .env antes de qualquer uso de variáveis de ambiente."""
+import os
+import shutil
+import sqlite3
+from pathlib import Path
+
+_BACKEND_DIR = Path(__file__).resolve().parent
+_ROOT_DIR = _BACKEND_DIR.parent
+
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    load_dotenv = None
+
+
+def _ensure_backend_env_file() -> None:
+    """Cria backend/.env a partir do exemplo se ainda não existir (facilita configurar GEMINI_API_KEY)."""
+    env_path = _BACKEND_DIR / ".env"
+    example = _BACKEND_DIR / ".env.example"
+    if env_path.exists():
+        return
+    if not example.exists():
+        return
+    try:
+        shutil.copyfile(example, env_path)
+        print(
+            "[INFO] Criado backend/.env a partir de .env.example. "
+            "Abra esse arquivo, preencha GEMINI_API_KEY e reinicie o servidor para usar /api/ai/*."
+        )
+    except OSError as exc:
+        print(f"[AVISO] Nao foi possivel criar backend/.env: {exc}")
+
+
+def _load_env_files() -> None:
+    if load_dotenv is None:
+        print("[AVISO] Pacote python-dotenv nao encontrado. Execute: pip install -r requirements.txt")
+        return
+    # Raiz do monorepo (alguns ambientes colocam .env na pasta do repositório)
+    load_dotenv(_ROOT_DIR / ".env", override=False, encoding="utf-8")
+    # Preferência: backend/.env sobrescreve chaves vindas da raiz
+    load_dotenv(_BACKEND_DIR / ".env", override=True, encoding="utf-8")
+
+
+_ensure_backend_env_file()
+_load_env_files()
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api import transactions, analytics, credit_cards, savings, ml, ai
+
+from app.api import ai, analytics, credit_cards, ml, savings, transactions
+from app.database import Base, engine
 from app.middleware import OptionalAPIKeyMiddleware
 from app.rate_limit_middleware import AIRateLimitMiddleware
-from app.database import engine, Base
-import sqlite3
-import os
 
 # Criar tabelas
 Base.metadata.create_all(bind=engine)
@@ -74,6 +119,12 @@ else:
     print(f"Banco de dados não encontrado em {DB_PATH}. Será criado automaticamente.")
 
 app = FastAPI(title="Controle Financeiro API", version="1.0.0")
+
+if not os.getenv("GEMINI_API_KEY", "").strip():
+    print(
+        "[AVISO] GEMINI_API_KEY vazia ou ausente — POST /api/ai/* retornara 503 ate configurar.\n"
+        f"         Edite: {_BACKEND_DIR / '.env'}  (cole sua chave apos GEMINI_API_KEY= e salve; reinicie o backend.)"
+    )
 
 # CORS
 # API key primeiro (inner), CORS por último (outermost) — preflight e headers corretos

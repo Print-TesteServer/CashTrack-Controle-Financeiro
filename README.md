@@ -12,7 +12,7 @@ Sistema completo de controle financeiro pessoal com análise de dados usando Pyt
 - **ML aplicado**: previsão de gastos com comparação de modelos (média móvel, tendência linear, **ARIMA**), validação holdout com **MAE/RMSE**
 - **Classificação de categorias**: TF-IDF + regressão logística (treino com despesas + descrição), endpoint de inferência
 - **Anomalias**: regras com z-score e **Isolation Forest** (sklearn) em agregados mensais por categoria
-- **IA generativa**: explicação do panorama financeiro e **consultas em linguagem natural** → plano JSON seguro (sem SQL livre), via API compatível com OpenAI
+- **IA generativa**: explicação do panorama financeiro e **consultas em linguagem natural** → plano JSON seguro (sem SQL livre), via **Google Gemini** (API REST)
 
 ## 🛠️ Tecnologias
 
@@ -23,7 +23,7 @@ Sistema completo de controle financeiro pessoal com análise de dados usando Pyt
 - NumPy - Cálculos numéricos
 - statsmodels - Séries temporais (ARIMA)
 - scikit-learn - Classificação de texto e Isolation Forest
-- httpx - Chamadas HTTP ao modelo de linguagem (API OpenAI-compatível)
+- httpx - Chamadas HTTP ao modelo de linguagem (Gemini / Google AI)
 - SQLite - Banco de dados (pode ser migrado para PostgreSQL)
 
 ### Frontend (React)
@@ -219,15 +219,14 @@ O backend combina analytics clássico (Pandas/NumPy) com:
 
 ### Backend (`backend/.env` ou variáveis do sistema)
 
-Copie `backend/.env.example` para `backend/.env` se quiser usar arquivo local.
+Copie `backend/.env.example` para `backend/.env` se quiser usar arquivo local. O `main.py` carrega `backend/.env` automaticamente ao iniciar (via `python-dotenv`).
 
 | Variável | Descrição |
 |----------|-----------|
 | `API_KEY` | Opcional. Se definida (não vazia), todas as rotas `/api/*` exigem o header `X-API-Key` com o mesmo valor. |
-| `OPENAI_API_KEY` | Opcional. Necessária para `POST /api/ai/explain` e `POST /api/ai/query`. **Nunca** commite no repositório. |
-| `OPENAI_MODEL` | Opcional. Ex.: `gpt-4o-mini` (padrão). |
-| `OPENAI_BASE_URL` | Opcional. Padrão `https://api.openai.com/v1`. Use URL compatível (ex. Ollama local) se preferir modelo local. |
-| `OPENAI_TIMEOUT_SECONDS` | Opcional. Timeout HTTP para o modelo (padrão 60). |
+| `GEMINI_API_KEY` | Opcional. Necessária para `POST /api/ai/explain` e `POST /api/ai/query` (Google AI / Gemini). **Nunca** commite no repositório. Gere em [Google AI Studio](https://aistudio.google.com/apikey). |
+| `GEMINI_MODEL` | Opcional. Ex.: `gemini-2.0-flash` (padrão no código). |
+| `GEMINI_TIMEOUT_SECONDS` | Opcional. Timeout HTTP para o modelo (padrão 60). |
 | `ALLOW_TRAINING_WITHOUT_API_KEY` | Opcional. Padrão `true` (dev): permite `POST /api/ml/train-category-classifier` sem `API_KEY` no servidor. Em produção use `false` e defina `API_KEY` para exigir `X-API-Key`. |
 | `AI_RATE_LIMIT_PER_MINUTE` | Opcional. Limite de requisições por IP nas rotas `/api/ai/*` (padrão 40). |
 | `AI_RATE_LIMIT_ENABLED` | Opcional. `true`/`false` — ativa o limite acima (padrão `true`). |

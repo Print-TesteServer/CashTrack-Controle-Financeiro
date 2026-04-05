@@ -3,16 +3,15 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
-import httpx
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
 from app.services.analytics import AnalyticsService
+from app.services.gemini_llm import gemini_generate
 
 ALLOWED_INTENTS = frozenset(
     {
@@ -97,13 +96,6 @@ def _parse_json_from_llm(content: str) -> Dict[str, Any]:
         raise ValueError("JSON invalido na resposta do modelo.")
 
 
-def _should_retry_without_response_format(status_code: int, response_text: str) -> bool:
-    if status_code != 400:
-        return False
-    t = (response_text or "").lower()
-    return "response_format" in t or "json_object" in t
-
-
 def _match_category(hint: Optional[str], names: List[str]) -> Optional[str]:
     if not hint or not names:
         return None
@@ -117,50 +109,14 @@ def _match_category(hint: Optional[str], names: List[str]) -> Optional[str]:
     return None
 
 
-def _call_openai_json(system: str, user: str) -> Tuple[dict, str]:
-    api_key = os.getenv("OPENAI_API_KEY", "").strip()
-    if not api_key:
-        raise ValueError("OPENAI_API_KEY nao configurada no ambiente do servidor.")
-
-    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip() or "gpt-4o-mini"
-    base = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
-    url = f"{base}/chat/completions"
-    timeout = float(os.getenv("OPENAI_TIMEOUT_SECONDS", "60"))
-
-    payload: Dict[str, Any] = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-        "temperature": 0.1,
-        "max_tokens": 400,
-        "response_format": {"type": "json_object"},
-    }
-
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-
-    with httpx.Client(timeout=timeout) as client:
-        r = client.post(url, headers=headers, json=payload)
-        if r.status_code == 400 and "response_format" in payload:
-            if _should_retry_without_response_format(r.status_code, r.text):
-                payload.pop("response_format", None)
-                r = client.post(url, headers=headers, json=payload)
-        r.raise_for_status()
-        data = r.json()
-
-    content = (
-        data.get("choices", [{}])[0]
-        .get("message", {})
-        .get("content", "")
-        .strip()
+def _call_llm_json_plan(system: str, user: str) -> Tuple[dict, str]:
+    content, used = gemini_generate(
+        system,
+        user,
+        temperature=0.1,
+        max_output_tokens=400,
+        json_mode=True,
     )
-    if not content:
-        raise ValueError("Resposta JSON vazia do modelo.")
-    used = str(data.get("model", model))
     return _parse_json_from_llm(content), used
 
 
@@ -185,7 +141,7 @@ def llm_parse_question(db: Session, question: str) -> Tuple[NLQueryPlan, str]:
         "Se a pergunta nao for sobre numeros do app, intent=unknown."
     )
     user = f'Pergunta do usuario: """{question.strip()}"""\nResponda so o JSON.'
-    raw, model = _call_openai_json(system, user)
+    raw, model = _call_llm_json_plan(system, user)
     plan = _parse_plan(raw)
     return plan, model
 

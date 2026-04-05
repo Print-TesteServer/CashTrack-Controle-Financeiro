@@ -105,6 +105,8 @@ export default function Analytics() {
   const [nlResult, setNlResult] = useState<AIQueryResponse | null>(null);
   const [nlLoading, setNlLoading] = useState(false);
   const [nlError, setNlError] = useState<string | null>(null);
+  /** Se true, ignora o mês inferido na pergunta e usa o mesmo período do seletor do topo. */
+  const [nlLockPeriodToSelector, setNlLockPeriodToSelector] = useState(false);
 
   useEffect(() => {
     return () => {
@@ -159,7 +161,7 @@ export default function Analytics() {
     setNlError(null);
     setNlResult(null);
     try {
-      const res = await aiService.nlQuery(q, selectedPeriod);
+      const res = await aiService.nlQuery(q, nlLockPeriodToSelector ? selectedPeriod : undefined);
       setNlResult(res);
     } catch (error: unknown) {
       const ax = error as { response?: { data?: { detail?: unknown } } };
@@ -193,7 +195,7 @@ export default function Analytics() {
           ? detail
           : detail != null
             ? JSON.stringify(detail)
-            : 'Falha ao gerar insight. Configure OPENAI_API_KEY no backend ou tente novamente.';
+            : 'Falha ao gerar insight. Configure GEMINI_API_KEY no backend ou tente novamente.';
       setAiError(msg);
     } finally {
       setAiLoading(false);
@@ -452,9 +454,19 @@ export default function Analytics() {
           <div className="mt-6 pt-4 border-t border-indigo-100">
             <h4 className="font-medium text-gray-800 mb-1">Consulta em linguagem natural</h4>
             <p className="text-xs text-gray-500 mb-2">
-              O modelo traduz sua pergunta para um plano seguro (totais por periodo, categoria, ranking). Sem SQL livre.
-              O periodo em meses segue o seletor acima ({selectedPeriod} meses).
+              O modelo traduz sua pergunta para um plano seguro (totais por período, categoria, ranking). Sem SQL livre.
+              Por padrão o período vem da própria pergunta (ex.: &quot;últimos 2 meses&quot;). Marque a opção abaixo para
+              usar sempre os mesmos {selectedPeriod} meses do seletor do topo.
             </p>
+            <label className="flex items-center gap-2 text-xs text-gray-600 mb-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={nlLockPeriodToSelector}
+                onChange={(e) => setNlLockPeriodToSelector(e.target.checked)}
+                className="rounded border-gray-300"
+              />
+              Forçar período igual ao seletor ({selectedPeriod} meses)
+            </label>
             <div className="flex flex-col sm:flex-row gap-2 mb-2">
               <input
                 type="text"

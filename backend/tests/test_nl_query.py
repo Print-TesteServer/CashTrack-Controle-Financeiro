@@ -1,11 +1,11 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
+from app.services.gemini_llm import should_retry_json_mime_error
 from app.services.nl_query import (
     NLQueryPlan,
     _match_category,
     _parse_json_from_llm,
-    _should_retry_without_response_format,
     execute_plan,
 )
 
@@ -23,10 +23,10 @@ class NLQueryHelpersTests(unittest.TestCase):
         self.assertEqual(d["months_back"], 6)
 
     def test_should_retry_only_on_400_with_keywords(self):
-        self.assertFalse(_should_retry_without_response_format(400, "bad request"))
-        self.assertTrue(_should_retry_without_response_format(400, "response_format not supported"))
-        self.assertTrue(_should_retry_without_response_format(400, "json_object"))
-        self.assertFalse(_should_retry_without_response_format(500, "response_format"))
+        self.assertFalse(should_retry_json_mime_error(400, "bad request"))
+        self.assertTrue(should_retry_json_mime_error(400, "responseMimeType is not supported"))
+        self.assertTrue(should_retry_json_mime_error(400, "invalid JSON mime type"))
+        self.assertFalse(should_retry_json_mime_error(500, "responseMimeType"))
 
     def test_match_category_fuzzy(self):
         self.assertEqual(_match_category("alimentação", ["Alimentação", "X"]), "Alimentação")
